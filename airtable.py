@@ -224,7 +224,7 @@ def get_project(job_number):
 def get_active_jobs(client_code):
     """
     Get all active (In Progress, On Hold) jobs for a client.
-    Returns list of {jobNumber, jobName, description}
+    Returns list of job dicts with full details for job cards.
     """
     if not AIRTABLE_API_KEY or not client_code:
         return []
@@ -249,7 +249,11 @@ def get_active_jobs(client_code):
             jobs.append({
                 'jobNumber': fields.get('Job Number', ''),
                 'jobName': fields.get('Project Name', ''),
-                'description': fields.get('Description', '')
+                'description': fields.get('Description', ''),
+                'stage': fields.get('Stage', ''),
+                'status': fields.get('Status', ''),
+                'updateDue': fields.get('Update due friendly', ''),
+                'withClient': fields.get('With Client?', False),
             })
         
         return jobs

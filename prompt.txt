@@ -227,30 +227,29 @@ Return ONLY valid JSON (no markdown, no explanation).
 {
   "route": "confirm",
   "confidence": "medium",
-  "clarifyType": "confirm_job",
-  "suggestedJob": {
-    "jobNumber": "TOW 086",
-    "jobName": "Health Check Campaign"
-  },
+  "clarifyType": "confirm",
+  "possibleJobs": [
+    {"jobNumber": "TOW 086", "jobName": "Health Check Campaign", "stage": "Craft", "status": "In Progress", "updateDue": "Mon 20 Jan", "withClient": false},
+    {"jobNumber": "TOW 085", "jobName": "Brand Refresh", "stage": "Refine", "status": "In Progress", "updateDue": "Wed 22 Jan", "withClient": true}
+  ],
   "originalIntent": "update|work-to-client|feedback|file",
   "clientCode": "TOW",
   "clientName": "Tower Insurance",
   "intent": "Brief description of what sender wants",
-  "reason": "Why I think it's this job but want to confirm"
+  "reason": "Why I think these jobs match"
 }
+
+NOTE: For "confirm", include ALL plausible matching jobs from the active jobs list (up to 5).
+Copy the full job details (stage, status, updateDue, withClient) from the active jobs data provided.
 
 
 --- LOW CONFIDENCE: CLARIFY ---
 {
   "route": "clarify",
   "confidence": "low",
-  "clarifyType": "no_idea|unknown_job|job_not_found",
+  "clarifyType": "no_idea|job_not_found",
   "clientCode": "TOW" or null,
   "clientName": "Tower Insurance" or null,
-  "possibleJobs": [
-    {"jobNumber": "TOW 085", "jobName": "Brand Refresh"},
-    {"jobNumber": "TOW 086", "jobName": "Health Check Campaign"}
-  ] or [],
   "intent": "Best guess at what sender wants" or null,
   "reason": "Why I couldn't match this"
 }
@@ -262,10 +261,13 @@ Use these exact values for clarifyType:
 
 | clarifyType | When to use |
 |-------------|-------------|
-| confirm_job | Medium confidence - you have a good guess, want to verify |
-| unknown_job | Know the client, but can't determine which job |
+| confirm | You identified the client and have 1-5 possible jobs to suggest |
 | no_idea | Can't identify client or intent at all |
 | job_not_found | Job number was provided but doesn't exist in active jobs |
+
+IMPORTANT: When using clarifyType "confirm", you MUST include "possibleJobs" in your response.
+This is a list of jobs that might match, with their full details from the active jobs list.
+The system will display these as clickable job cards in the email.
 
 
 === RULES ===
@@ -436,33 +438,37 @@ Body: Any progress on the thing we discussed?
   "clarifyType": "no_idea",
   "clientCode": null,
   "clientName": null,
-  "possibleJobs": [],
   "intent": null,
   "reason": "Unknown sender, no job reference, no client indicators"
 }
 
 
-EXAMPLE 9: Known client, unknown job - clarify
+EXAMPLE 9: Known client, multiple possible jobs - confirm with options
 
 Email from: sarah@tower.co.nz
 Subject: Quick question
 Body: Can you send me the latest version?
-Active jobs: [TOW 085 - Brand Refresh, TOW 086 - Health Check, TOW 087 - Newsletter]
+Active jobs: [
+  {jobNumber: "TOW 085", jobName: "Brand Refresh", stage: "Refine", status: "In Progress", updateDue: "Mon 20 Jan", withClient: false},
+  {jobNumber: "TOW 086", jobName: "Health Check", stage: "Craft", status: "In Progress", updateDue: "Wed 22 Jan", withClient: true},
+  {jobNumber: "TOW 087", jobName: "Newsletter", stage: "Deliver", status: "In Progress", updateDue: "Fri 24 Jan", withClient: false}
+]
 
-→ Low confidence, CLARIFY
+→ Medium confidence, CONFIRM with options
 {
-  "route": "clarify",
-  "confidence": "low",
-  "clarifyType": "unknown_job",
+  "route": "confirm",
+  "confidence": "medium",
+  "clarifyType": "confirm",
   "clientCode": "TOW",
   "clientName": "Tower Insurance",
   "possibleJobs": [
-    {"jobNumber": "TOW 085", "jobName": "Brand Refresh"},
-    {"jobNumber": "TOW 086", "jobName": "Health Check"},
-    {"jobNumber": "TOW 087", "jobName": "Newsletter"}
+    {"jobNumber": "TOW 085", "jobName": "Brand Refresh", "stage": "Refine", "status": "In Progress", "updateDue": "Mon 20 Jan", "withClient": false},
+    {"jobNumber": "TOW 086", "jobName": "Health Check", "stage": "Craft", "status": "In Progress", "updateDue": "Wed 22 Jan", "withClient": true},
+    {"jobNumber": "TOW 087", "jobName": "Newsletter", "stage": "Deliver", "status": "In Progress", "updateDue": "Fri 24 Jan", "withClient": false}
   ],
+  "originalIntent": "update",
   "intent": "Requesting latest version of something",
-  "reason": "No indication which of three active jobs this relates to"
+  "reason": "Known client, three active jobs could match - presenting options"
 }
 
 

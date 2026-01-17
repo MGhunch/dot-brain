@@ -68,22 +68,12 @@ ROUTES = {
 # ===================
 
 EMAIL_TEMPLATES = {
-    # Medium confidence - we have a good guess
-    "confirm_job": """
+    # We have one or more possible jobs - show cards
+    "confirm": """
 <p>Hi {sender_name},</p>
-<p>I think this is for:</p>
-<p><strong>{job_number} - {job_name}</strong></p>
-<p>Reply <strong>YES</strong> to confirm, or give me the correct job number.</p>
-<p>Dot</p>
-""",
-    
-    # Known client, but can't determine which job
-    "unknown_job": """
-<p>Hi {sender_name},</p>
-<p>I can see we're talking about <strong>{client_name}</strong> but it's not clear which job.</p>
-<p>Any of these?</p>
-{job_list}
-<p>Reply with the job number, or reply <strong>TRIAGE</strong> if this is a new job.</p>
+<p>I'm not totally sure which job you mean. Do any of these look right?</p>
+{job_cards}
+<p>Click a card to open it in Hub, or just reply with the job number and I'll get on with it.</p>
 <p>Dot</p>
 """,
     
@@ -105,16 +95,55 @@ EMAIL_TEMPLATES = {
 }
 
 
-def _format_job_list(possible_jobs):
-    """Format list of possible jobs as HTML"""
+def _format_job_cards(possible_jobs):
+    """Format list of possible jobs as HTML cards with Hub links"""
     if not possible_jobs:
         return "<p><em>No active jobs found</em></p>"
     
-    lines = []
-    for job in possible_jobs[:5]:  # Max 5 jobs
-        lines.append(f"<strong>{job['jobNumber']}</strong> - {job['jobName']}")
+    # Hub base URL
+    HUB_URL = "https://dot-hub.up.railway.app"
     
-    return "<p>" + "<br>".join(lines) + "</p>"
+    cards = []
+    for job in possible_jobs[:5]:  # Max 5 jobs
+        job_number = job.get('jobNumber', '')
+        job_name = job.get('jobName', '')
+        stage = job.get('stage', '')
+        status = job.get('status', '')
+        update_due = job.get('updateDue', 'TBC')
+        with_client = job.get('withClient', False)
+        
+        # Build Hub link
+        hub_link = f"{HUB_URL}/?job={job_number.replace(' ', '')}&action=edit"
+        
+        # Status badge
+        status_text = "With client" if with_client else stage
+        
+        # Card HTML - inline styles for email compatibility
+        card = f"""
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:12px;">
+  <tr>
+    <td style="background:#f5f5f5; border-radius:8px; padding:16px; border-left:4px solid #ED1C24;">
+      <a href="{hub_link}" style="text-decoration:none; color:inherit; display:block;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%">
+          <tr>
+            <td style="font-size:16px; font-weight:600; color:#1a1a1a; padding-bottom:4px;">
+              {job_number} | {job_name}
+            </td>
+          </tr>
+          <tr>
+            <td style="font-size:13px; color:#666;">
+              {status_text} · Due {update_due}
+            </td>
+          </tr>
+        </table>
+      </a>
+    </td>
+  </tr>
+</table>
+"""
+        cards.append(card)
+    
+    return "\n".join(cards)
 
 
 def build_email(clarify_type, routing_data):
@@ -128,29 +157,48 @@ def build_email(clarify_type, routing_data):
     Returns:
         HTML string for email body
     """
-    template = EMAIL_TEMPLATES.get(clarify_type, EMAIL_TEMPLATES['no_idea'])
+    # Map old clarify types to new simplified ones
+    type_mapping = {
+        'confirm_job': 'confirm',
+        'unknown_job': 'confirm',
+        'pick_job': 'confirm',
+        'no_idea': 'no_idea',
+        'job_not_found': 'job_not_found',
+    }
+    template_type = type_mapping.get(clarify_type, clarify_type)
+    template = EMAIL_TEMPLATES.get(template_type, EMAIL_TEMPLATES['no_idea'])
     
     # Get sender name (default to "there")
     sender_name = routing_data.get('senderName', '') or 'there'
     
-    # Build job list if needed
-    job_list = ""
-    if clarify_type == "unknown_job":
+    # Build job cards if needed
+    job_cards = ""
+    if template_type == "confirm":
         possible_jobs = routing_data.get('possibleJobs', [])
-        job_list = _format_job_list(possible_jobs)
+        # If we have a single suggested job, wrap it in a list
+        if not possible_jobs and routing_data.get('suggestedJob'):
+            possible_jobs = [routing_data.get('suggestedJob')]
+        # If we have jobNumber but no possibleJobs, create a minimal job object
+        if not possible_jobs and routing_data.get('jobNumber'):
+            possible_jobs = [{
+                'jobNumber': routing_data.get('jobNumber', ''),
+                'jobName': routing_data.get('jobName', ''),
+                'stage': routing_data.get('currentStage', ''),
+                'status': routing_data.get('currentStatus', ''),
+                'updateDue': 'TBC',
+                'withClient': routing_data.get('withClient', False),
+            }]
+        job_cards = _format_job_cards(possible_jobs)
     
-    # Get suggested job info for confirm
-    suggested_job = routing_data.get('suggestedJob', {})
-    job_number = suggested_job.get('jobNumber', routing_data.get('jobNumber', ''))
-    job_name = suggested_job.get('jobName', '')
+    # Get job number for job_not_found template
+    job_number = routing_data.get('jobNumber', '')
     
     # Format template
     html = template.format(
         sender_name=sender_name,
         client_name=routing_data.get('clientName', 'your client'),
         job_number=job_number,
-        job_name=job_name,
-        job_list=job_list
+        job_cards=job_cards
     )
     
     return html.strip()
