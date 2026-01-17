@@ -32,6 +32,10 @@ ROUTES = {
         "endpoint": "https://dot-triage.up.railway.app/process",
         "status": "not_built",
     },
+    "incoming": {
+        "endpoint": "https://dot-incoming.up.railway.app/process",
+        "status": "not_built",
+    },
     "wip": {
         "endpoint": "https://dot-wip.up.railway.app/process",
         "status": "not_built",
@@ -80,8 +84,8 @@ EMAIL_TEMPLATES = {
     # Can't identify client or intent at all
     "no_idea": """
 <p>Hi {sender_name},</p>
-<p>Throw me a bone here – I've got totally no idea what you're asking for.</p>
-<p>Come back to me with a job number, or a client – and I'll see what I can do.</p>
+<p>Throw me a bone here â€“ I've got totally no idea what you're asking for.</p>
+<p>Come back to me with a job number, or a client â€“ and I'll see what I can do.</p>
 <p>Dot</p>
 """,
     
@@ -132,7 +136,7 @@ def _format_job_cards(possible_jobs):
           </tr>
           <tr>
             <td style="font-size:13px; color:#666;">
-              {status_text} · Due {update_due}
+              {status_text} Â· Due {update_due}
             </td>
           </tr>
         </table>
@@ -243,7 +247,7 @@ def call_worker(route, payload):
     
     # If testing, log but also try to call
     if status == 'testing':
-        print(f"[connect] Testing route '{route}' → {endpoint}")
+        print(f"[connect] Testing route '{route}' â†’ {endpoint}")
     
     # Handle PA Postman (email sending)
     if endpoint == 'PA_POSTMAN':
