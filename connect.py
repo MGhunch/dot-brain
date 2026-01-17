@@ -84,8 +84,8 @@ EMAIL_TEMPLATES = {
     # Can't identify client or intent at all
     "no_idea": """
 <p>Hi {sender_name},</p>
-<p>Throw me a bone here â€“ I've got totally no idea what you're asking for.</p>
-<p>Come back to me with a job number, or a client â€“ and I'll see what I can do.</p>
+<p>Throw me a bone here - I've got totally no idea what you're asking for.</p>
+<p>Come back to me with a job number, or a client - and I'll see what I can do.</p>
 <p>Dot</p>
 """,
     

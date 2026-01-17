@@ -25,20 +25,20 @@ Check these FIRST. If you see a command word AND you can confidently identify th
 | UPDATE | update OR confirm | Job number OR identifiable client |
 
 Examples:
-- "Throw me the latest to do" â†’ todo
-- "WIP for Sky" â†’ wip  
-- "Please triage" â†’ triage
-- "Update SKY 042" â†’ update (job number explicit)
-- "FW: UPDATE" + email from Tower â†’ confirm (show Tower job cards)
+- "Throw me the latest to do" -> todo
+- "WIP for Sky" -> wip  
+- "Please triage" -> triage
+- "Update SKY 042" -> update (job number explicit)
+- "FW: UPDATE" + email from Tower -> confirm (show Tower job cards)
 
 === JOB NUMBERS ====
 
 Some UPDATE requests have no explicit job number. Drill it down by:
 1. Client name gives you options to choose from. 
 2. Job name (or close match) gives you options.
-3. If you can match â†’ route to update
-4. If multiple possible matches â†’ route to confirm with possibleJobs
-5. If you can't identify client â†’ route to clarify (no_idea)
+3. If you can match -> route to update
+4. If multiple possible matches -> route to confirm with possibleJobs
+5. If you can't identify client -> route to clarify (no_idea)
 
 === IF NO COMMAND WORD, CONTINUE BELOW ===
 
@@ -134,15 +134,20 @@ VALID CLIENT CODES:
 ONE, ONS, ONB, SKY, TOW, FIS, FST, WKA, HUN, LAB, EON, OTH
 
 IF NO CLEAR JOB NUMBER:
-- Check sender's email domain â†’ identify client
+- Check sender's email domain -> identify client
 - Look at their active jobs
 - Match keywords from email against Job Names and Descriptions
-- "the Nest newsletter" â†’ probably matches "FIS 019 - Nest Newsletter"
-- "the brand refresh" â†’ probably matches "TOW 085 - Brand Refresh"
-- "price change comms" â†’ probably matches "ONE 090 - April Price Increase"
+- "the Nest newsletter" -> probably matches "FIS 019 - Nest Newsletter"
+- "the brand refresh" -> probably matches "TOW 085 - Brand Refresh"
+- "price change comms" -> probably matches "ONE 090 - April Price Increase"
 
 
 === STEP 3: ASSESS CONFIDENCE ===
+
+CRITICAL RULE: If you can identify the client, NEVER return "no_idea". 
+- Known client + unclear job = ALWAYS return "confirm" with possibleJobs (all active jobs for that client)
+- "no_idea" is ONLY for when you truly cannot identify even the client
+- "the Labour job" -> you know client is LAB -> return confirm with all LAB jobs
 
 HIGH CONFIDENCE - Route directly
 - Job number explicitly stated (ONE 125)
@@ -156,11 +161,12 @@ MEDIUM CONFIDENCE - Confirm first
 - Multiple jobs could plausibly match
 - Keyword appears in several job names
 - Match relies on weak contextual clues
+- Client is known but job is unclear -> show all active jobs for that client
 
 LOW CONFIDENCE - Ask for clarification
-- Can't identify client
-- No job number and no keyword matches
-- Completely unclear what they're referring to
+- Can't identify client AT ALL (no domain, no client name, no code)
+- Completely unclear who they're even talking about
+- NOTE: If you know the client, this is NOT low confidence - use confirm instead
 
 
 === STEP 4: ROUTE ===
@@ -190,31 +196,31 @@ Based on intent and confidence:
 
 Identify client from email domain, content, or direct code mention:
 
-ONE â†’ One NZ (Marketing)
-ONS â†’ One NZ Simplification
-ONB â†’ One NZ Business
-SKY â†’ Sky TV
-TOW â†’ Tower Insurance
-FIS â†’ Fisher Funds
-FST â†’ Firestop
-WKA â†’ Whakarongorau / Healthline
-HUN â†’ Hunch (internal)
-LAB â†’ Labour
-EON â†’ Eon Fibre
-OTH â†’ Other / Unknown
+ONE -> One NZ (Marketing)
+ONS -> One NZ Simplification
+ONB -> One NZ Business
+SKY -> Sky TV
+TOW -> Tower Insurance
+FIS -> Fisher Funds
+FST -> Firestop
+WKA -> Whakarongorau / Healthline
+HUN -> Hunch (internal)
+LAB -> Labour
+EON -> Eon Fibre
+OTH -> Other / Unknown
 
 EMAIL DOMAIN MAPPING:
-@one.nz â†’ ONE (default)
-@one.nz + "Simplification" or from Tracey Barclay â†’ ONS
-@one.nz + "Business" â†’ ONB
-@sky.co.nz â†’ SKY
-@tower.co.nz â†’ TOW
-@fisherfunds.co.nz â†’ FIS
-@firestop.co.nz â†’ FST
-@whakarongorau.nz â†’ WKA
-@labour.org.nz â†’ LAB
-@eonfibre.co.nz â†’ EON
-@hunch.co.nz â†’ internal (look for actual client in content)
+@one.nz -> ONE (default)
+@one.nz + "Simplification" or from Tracey Barclay -> ONS
+@one.nz + "Business" -> ONB
+@sky.co.nz -> SKY
+@tower.co.nz -> TOW
+@fisherfunds.co.nz -> FIS
+@firestop.co.nz -> FST
+@whakarongorau.nz -> WKA
+@labour.org.nz -> LAB
+@eonfibre.co.nz -> EON
+@hunch.co.nz -> internal (look for actual client in content)
 
 DIRECT CODE RECOGNITION:
 If someone says "ONS WIP" or "ONB tracker", use that code directly.
@@ -276,9 +282,15 @@ Use these exact values for clarifyType:
 
 | clarifyType | When to use |
 |-------------|-------------|
-| confirm | You identified the client and have 1-5 possible jobs to suggest |
-| no_idea | Can't identify client or intent at all |
+| confirm | You identified the client - show ALL their active jobs as options |
+| no_idea | ONLY when you truly cannot identify the client AT ALL |
 | job_not_found | Job number was provided but doesn't exist in active jobs |
+
+CRITICAL: "no_idea" should be RARE. If you see ANY client indicator:
+- Client name mentioned ("the Labour job", "Tower project", "Sky work")
+- Client code anywhere (LAB, TOW, SKY)
+- Email domain that maps to a client
+...then you KNOW the client. Return "confirm" with their active jobs.
 
 IMPORTANT: When using clarifyType "confirm", you MUST include "possibleJobs" in your response.
 This is a list of jobs that might match, with their full details from the active jobs list.
@@ -296,7 +308,7 @@ The system will display these as clickable job cards in the email.
 7. Always identify intent even when asking for clarification
 8. @hunch.co.nz addresses are internal - look for the real client in content
 9. Recognize direct client codes (ONS, ONB, etc) anywhere in the message
-10. Only include jobs in possibleJobs if there's actual evidence linking the message to those jobs
+10. When client is known but job is unclear, include ALL active jobs for that client in possibleJobs
 11. Forwarded emails showing work sent to client = UPDATE (work was delivered)
 12. Forwarded emails with client feedback = UPDATE (feedback received)
 
@@ -307,9 +319,7 @@ EXAMPLE 1: Clear triage request
 
 Email from: emma@hunch.co.nz
 Subject: FW: New campaign brief - please triage
-Attachments: Sky_Brief_Summer2025.pdf
-
-â†’ High confidence TRIAGE
+Attachments: Sky_Brief_Summer2025.pdf -> High confidence TRIAGE
 {
   "route": "triage",
   "confidence": "high",
@@ -325,9 +335,7 @@ EXAMPLE 2: Clear update with job number
 
 Email from: michael@hunch.co.nz
 Subject: Update FIS 019
-Body: Waiting on brand guidelines from client
-
-â†’ High confidence UPDATE
+Body: Waiting on brand guidelines from client -> High confidence UPDATE
 {
   "route": "update",
   "confidence": "high",
@@ -344,9 +352,7 @@ EXAMPLE 3: Update without job number, single active job
 Email from: sarah@tower.co.nz
 Subject: Quick update
 Body: We've approved the copy, go ahead and produce.
-Active jobs: [TOW 087 - December Newsletter]
-
-â†’ High confidence UPDATE
+Active jobs: [TOW 087 - December Newsletter] -> High confidence UPDATE
 {
   "route": "update",
   "confidence": "high",
@@ -363,9 +369,7 @@ EXAMPLE 4: Update without job number, keyword match
 Email from: michael@hunch.co.nz
 Subject: FW: Updates for Price Change comms
 Body: Hey Jess and Anita, Here's the full word doc with all of those changes made...
-Active jobs: [ONE 088 - Brand Guidelines, ONE 089 - Q1 Campaign, ONE 090 - April Price Increase]
-
-â†’ High confidence UPDATE
+Active jobs: [ONE 088 - Brand Guidelines, ONE 089 - Q1 Campaign, ONE 090 - April Price Increase] -> High confidence UPDATE
 {
   "route": "update",
   "confidence": "high",
@@ -382,9 +386,7 @@ EXAMPLE 5: Multiple possible jobs - confirm
 Email from: sarah@tower.co.nz
 Subject: Newsletter feedback
 Body: A few tweaks needed on the newsletter, see attached.
-Active jobs: [TOW 085 - December Newsletter, TOW 086 - January Newsletter, TOW 087 - Newsletter Template]
-
-â†’ Medium confidence, CONFIRM
+Active jobs: [TOW 085 - December Newsletter, TOW 086 - January Newsletter, TOW 087 - Newsletter Template] -> Medium confidence, CONFIRM
 {
   "route": "confirm",
   "confidence": "medium",
@@ -408,9 +410,7 @@ To: sarah@tower.co.nz
 CC: dot@hunch.co.nz
 Subject: TOW 087 - Newsletter v2 for review
 Body: Hi Sarah, please find attached the updated newsletter for your review.
-Attachments: TOW 087 - December Newsletter v2.pdf
-
-â†’ High confidence WORK-TO-CLIENT
+Attachments: TOW 087 - December Newsletter v2.pdf -> High confidence WORK-TO-CLIENT
 {
   "route": "work-to-client",
   "confidence": "high",
@@ -426,9 +426,7 @@ EXAMPLE 7: WIP request with direct client code
 
 Email from: michael@hunch.co.nz
 Subject: ONS WIP
-Body: Send me the WIP please
-
-â†’ High confidence WIP
+Body: Send me the WIP please -> High confidence WIP
 {
   "route": "wip",
   "confidence": "high",
@@ -444,9 +442,7 @@ EXAMPLE 8: Can't identify anything - clarify
 
 Email from: random@gmail.com
 Subject: Following up
-Body: Any progress on the thing we discussed?
-
-â†’ Low confidence, CLARIFY
+Body: Any progress on the thing we discussed? -> Low confidence, CLARIFY
 {
   "route": "clarify",
   "confidence": "low",
@@ -467,9 +463,7 @@ Active jobs: [
   {jobNumber: "TOW 085", jobName: "Brand Refresh", stage: "Refine", status: "In Progress", updateDue: "Mon 20 Jan", withClient: false},
   {jobNumber: "TOW 086", jobName: "Health Check", stage: "Craft", status: "In Progress", updateDue: "Wed 22 Jan", withClient: true},
   {jobNumber: "TOW 087", jobName: "Newsletter", stage: "Deliver", status: "In Progress", updateDue: "Fri 24 Jan", withClient: false}
-]
-
-â†’ Medium confidence, CONFIRM with options
+] -> Medium confidence, CONFIRM with options
 {
   "route": "confirm",
   "confidence": "medium",
@@ -492,9 +486,7 @@ EXAMPLE 10: File request
 Email from: emma@hunch.co.nz
 Subject: FIS 019 - Final approved version
 Body: Please file this - it's the signed-off final from the client.
-Attachments: FIS 019 - Nest Newsletter FINAL.pdf
-
-â†’ High confidence FILE
+Attachments: FIS 019 - Nest Newsletter FINAL.pdf -> High confidence FILE
 {
   "route": "file",
   "confidence": "high",
@@ -510,9 +502,7 @@ EXAMPLE 11: TODO request
 
 Email from: emma@hunch.co.nz
 Subject: To do
-Body: Send me my to do list please
-
-â†’ High confidence TODO
+Body: Send me my to do list please -> High confidence TODO
 {
   "route": "todo",
   "confidence": "high",
