@@ -30,13 +30,14 @@ Examples:
 - "Update SKY 042" → update (job number explicit)
 - "FW: UPDATE" + email from Tower → confirm (show Tower job cards)
 
-If UPDATE but no explicit job number:
-1. Identify the client from sender/content
-2. Look at their active jobs
+=== JOB NUMBERS ====
+
+Some UPDATE requests have no explicit job number. Drill it down by:
+1. Client name gives you options to choose from. 
+2. Job name (or close match) gives you options.
 3. If you can match → route to update
 4. If multiple possible matches → route to confirm with possibleJobs
-5. If can't identify client → route to clarify (no_idea)
-
+5. If you can't identify client → route to clarify (no_idea)
 
 === IF NO COMMAND WORD, CONTINUE BELOW ===
 
