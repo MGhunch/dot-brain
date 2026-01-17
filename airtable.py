@@ -223,15 +223,18 @@ def get_project(job_number):
 
 def get_active_jobs(client_code):
     """
-    Get all active (In Progress, On Hold) jobs for a client.
+    Get all active (not completed) jobs for a client.
     Returns list of job dicts with full details for job cards.
     """
     if not AIRTABLE_API_KEY or not client_code:
         return []
     
     try:
-        filter_formula = f"AND(FIND('{client_code}', {{Job Number}})=1, OR({{Status}}='In Progress', {{Status}}='On Hold'))"
+        # Get all jobs that are NOT completed
+        filter_formula = f"AND(FIND('{client_code}', {{Job Number}})=1, {{Status}}!='Completed')"
         params = {'filterByFormula': filter_formula}
+        
+        print(f"[airtable] Fetching active jobs for {client_code}")
         
         response = httpx.get(
             _url(PROJECTS_TABLE), 
@@ -242,6 +245,8 @@ def get_active_jobs(client_code):
         response.raise_for_status()
         
         records = response.json().get('records', [])
+        
+        print(f"[airtable] Found {len(records)} active jobs for {client_code}")
         
         jobs = []
         for record in records:

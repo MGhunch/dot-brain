@@ -136,7 +136,7 @@ def _format_job_cards(possible_jobs):
           </tr>
           <tr>
             <td style="font-size:13px; color:#666;">
-              {status_text} Â· Due {update_due}
+              {status_text} | Due {update_due}
             </td>
           </tr>
         </table>
@@ -247,7 +247,7 @@ def call_worker(route, payload):
     
     # If testing, log but also try to call
     if status == 'testing':
-        print(f"[connect] Testing route '{route}' â†’ {endpoint}")
+        print(f"[connect] Testing route '{route}' -> {endpoint}")
     
     # Handle PA Postman (email sending)
     if endpoint == 'PA_POSTMAN':
