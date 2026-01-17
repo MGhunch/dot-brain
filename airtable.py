@@ -1,0 +1,327 @@
+"""
+Dot Traffic 2.0 - Airtable Operations
+All reads and writes to Airtable: Projects, Clients, Traffic table
+"""
+
+import os
+import httpx
+from datetime import datetime
+
+# ===================
+# CONFIG
+# ===================
+
+AIRTABLE_API_KEY = os.environ.get('AIRTABLE_API_KEY')
+AIRTABLE_BASE_ID = os.environ.get('AIRTABLE_BASE_ID', 'app8CI7NAZqhQ4G1Y')
+
+PROJECTS_TABLE = 'Projects'
+CLIENTS_TABLE = 'Clients'
+TRAFFIC_TABLE = 'Traffic'
+
+TIMEOUT = 10.0
+
+
+def _headers():
+    """Standard Airtable headers"""
+    return {
+        'Authorization': f'Bearer {AIRTABLE_API_KEY}',
+        'Content-Type': 'application/json'
+    }
+
+
+def _url(table):
+    """Build Airtable URL for a table"""
+    return f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{table}'
+
+
+# ===================
+# TRAFFIC TABLE (Deduplication & Logging)
+# ===================
+
+def check_duplicate(internet_message_id):
+    """
+    Check if we've already processed this email.
+    Returns the existing record if found, None otherwise.
+    """
+    if not AIRTABLE_API_KEY or not internet_message_id:
+        return None
+    
+    try:
+        params = {
+            'filterByFormula': f"{{internetMessageId}}='{internet_message_id}'"
+        }
+        
+        response = httpx.get(
+            _url(TRAFFIC_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        return records[0] if records else None
+        
+    except Exception as e:
+        print(f"[airtable] Error checking duplicate: {e}")
+        return None
+
+
+def check_pending_clarify(conversation_id):
+    """
+    Check if this conversation has a pending clarify request.
+    Returns the pending record if found, None otherwise.
+    """
+    if not AIRTABLE_API_KEY or not conversation_id:
+        return None
+    
+    try:
+        filter_formula = f"AND({{conversationId}}='{conversation_id}', {{Status}}='pending')"
+        params = {'filterByFormula': filter_formula}
+        
+        response = httpx.get(
+            _url(TRAFFIC_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        return records[0] if records else None
+        
+    except Exception as e:
+        print(f"[airtable] Error checking pending clarify: {e}")
+        return None
+
+
+def log_traffic(internet_message_id, conversation_id, route, status, job_number, client_code, sender_email, subject):
+    """
+    Log email to Traffic table.
+    Returns the created record ID or None.
+    """
+    if not AIRTABLE_API_KEY:
+        return None
+    
+    try:
+        record_data = {
+            'fields': {
+                'internetMessageId': internet_message_id or '',
+                'conversationId': conversation_id or '',
+                'Route': route,
+                'Status': status,
+                'JobNumber': job_number or '',
+                'clientCode': client_code or '',
+                'SenderEmail': sender_email or '',
+                'Subject': subject or '',
+                'CreatedAt': datetime.utcnow().isoformat()
+            }
+        }
+        
+        response = httpx.post(
+            _url(TRAFFIC_TABLE), 
+            headers=_headers(), 
+            json=record_data, 
+            timeout=TIMEOUT
+        )
+        
+        if response.status_code != 200:
+            print(f"[airtable] Traffic log rejected: {response.status_code} - {response.text}")
+            return None
+        
+        return response.json().get('id')
+        
+    except Exception as e:
+        print(f"[airtable] Error logging to Traffic: {e}")
+        return None
+
+
+def update_traffic_record(record_id, updates):
+    """
+    Update an existing Traffic table record.
+    updates: dict of field names to values
+    """
+    if not AIRTABLE_API_KEY or not record_id:
+        return False
+    
+    try:
+        response = httpx.patch(
+            f"{_url(TRAFFIC_TABLE)}/{record_id}",
+            headers=_headers(),
+            json={'fields': updates},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        return True
+        
+    except Exception as e:
+        print(f"[airtable] Error updating Traffic record: {e}")
+        return False
+
+
+# ===================
+# PROJECTS TABLE
+# ===================
+
+def get_project(job_number):
+    """
+    Look up project by job number.
+    Returns dict with project info or None.
+    """
+    if not AIRTABLE_API_KEY or not job_number:
+        return None
+    
+    try:
+        params = {
+            'filterByFormula': f"{{Job Number}}='{job_number}'"
+        }
+        
+        response = httpx.get(
+            _url(PROJECTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            return None
+        
+        record = records[0]
+        fields = record['fields']
+        
+        # Client name might be a linked field (list)
+        client_name = fields.get('Client', '')
+        if isinstance(client_name, list):
+            client_name = client_name[0] if client_name else ''
+        
+        # Extract client code from job number
+        client_code = job_number.split()[0] if job_number else None
+        
+        # Get Team ID from Clients table
+        team_id = get_team_id(client_code) if client_code else None
+        
+        return {
+            'recordId': record['id'],
+            'jobNumber': fields.get('Job Number', job_number),
+            'jobName': fields.get('Project Name', ''),
+            'clientName': client_name,
+            'clientCode': client_code,
+            'stage': fields.get('Stage', ''),
+            'status': fields.get('Status', ''),
+            'round': fields.get('Round', 0) or 0,
+            'withClient': fields.get('With Client?', False),
+            'teamsChannelId': fields.get('Teams Channel ID', None),
+            'teamId': team_id
+        }
+        
+    except Exception as e:
+        print(f"[airtable] Error looking up project: {e}")
+        return None
+
+
+def get_active_jobs(client_code):
+    """
+    Get all active (In Progress, On Hold) jobs for a client.
+    Returns list of {jobNumber, jobName, description}
+    """
+    if not AIRTABLE_API_KEY or not client_code:
+        return []
+    
+    try:
+        filter_formula = f"AND(FIND('{client_code}', {{Job Number}})=1, OR({{Status}}='In Progress', {{Status}}='On Hold'))"
+        params = {'filterByFormula': filter_formula}
+        
+        response = httpx.get(
+            _url(PROJECTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        
+        jobs = []
+        for record in records:
+            fields = record.get('fields', {})
+            jobs.append({
+                'jobNumber': fields.get('Job Number', ''),
+                'jobName': fields.get('Project Name', ''),
+                'description': fields.get('Description', '')
+            })
+        
+        return jobs
+        
+    except Exception as e:
+        print(f"[airtable] Error getting active jobs: {e}")
+        return []
+
+
+# ===================
+# CLIENTS TABLE
+# ===================
+
+def get_team_id(client_code):
+    """
+    Look up Team ID from Clients table by client code.
+    Returns Team ID string or None.
+    """
+    if not AIRTABLE_API_KEY or not client_code:
+        return None
+    
+    try:
+        params = {
+            'filterByFormula': f"{{Client code}}='{client_code}'"
+        }
+        
+        response = httpx.get(
+            _url(CLIENTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            return None
+        
+        return records[0]['fields'].get('Teams ID', None)
+        
+    except Exception as e:
+        print(f"[airtable] Error looking up Team ID: {e}")
+        return None
+
+
+def get_client_name(client_code):
+    """
+    Look up client name from Clients table by client code.
+    Returns client name string or None.
+    """
+    if not AIRTABLE_API_KEY or not client_code:
+        return None
+    
+    try:
+        params = {
+            'filterByFormula': f"{{Client code}}='{client_code}'"
+        }
+        
+        response = httpx.get(
+            _url(CLIENTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            return None
+        
+        return records[0]['fields'].get('Clients', None)
+        
+    except Exception as e:
+        print(f"[airtable] Error looking up client name: {e}")
+        return None
