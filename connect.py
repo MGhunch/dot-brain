@@ -14,6 +14,9 @@ PA_POSTMAN_URL = os.environ.get('PA_POSTMAN_URL', '')
 
 TIMEOUT = 30.0
 
+# Logo for email footer
+LOGO_URL = "https://raw.githubusercontent.com/MGhunch/dot-hub/main/images/ai2-logo.png"
+
 
 # ===================
 # ROUTE REGISTRY
@@ -68,33 +71,98 @@ ROUTES = {
 
 
 # ===================
-# EMAIL TEMPLATES
+# EMAIL WRAPPER & FOOTER
+# ===================
+
+def _email_wrapper(content):
+    """Wrap email content with consistent styling and footer"""
+    return f"""<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 15px; line-height: 1.6; color: #333;">
+{content}
+
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top: 32px; border-top: 1px solid #eee; padding-top: 16px;">
+  <tr>
+    <td style="vertical-align: middle; padding-right: 12px;" width="48">
+      <img src="{LOGO_URL}" alt="hai2" width="44" height="28" style="display: block;">
+    </td>
+    <td style="vertical-align: middle; font-size: 12px; color: #999;">
+      Dot is a robot, but there's humans in the loop.
+    </td>
+  </tr>
+</table>
+</div>"""
+
+
+def _success_box(title, subtitle):
+    """Green success detail box with tick"""
+    return f"""<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 20px;">
+  <tr>
+    <td style="background: #f0fdf4; border-radius: 8px; padding: 16px; border-left: 4px solid #22c55e;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td width="28" style="vertical-align: top; padding-right: 12px;">
+            <div style="width: 24px; height: 24px; background: #22c55e; border-radius: 50%; text-align: center; line-height: 24px;">
+              <span style="color: white; font-size: 14px;">✓</span>
+            </div>
+          </td>
+          <td style="vertical-align: top;">
+            <div style="font-weight: 600; color: #333; margin-bottom: 2px;">{title}</div>
+            <div style="font-size: 13px; color: #666;">{subtitle}</div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>"""
+
+
+def _failure_box(title, subtitle):
+    """Red failure detail box with X"""
+    return f"""<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 20px;">
+  <tr>
+    <td style="background: #fef2f2; border-radius: 8px; padding: 16px; border-left: 4px solid #ef4444;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td width="28" style="vertical-align: top; padding-right: 12px;">
+            <div style="width: 24px; height: 24px; background: #ef4444; border-radius: 50%; text-align: center; line-height: 24px;">
+              <span style="color: white; font-size: 14px;">✕</span>
+            </div>
+          </td>
+          <td style="vertical-align: top;">
+            <div style="font-weight: 600; color: #333; margin-bottom: 2px;">{title}</div>
+            <div style="font-size: 13px; color: #666;">{subtitle}</div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>"""
+
+
+# ===================
+# EMAIL TEMPLATES (for clarify/confirm)
 # ===================
 
 EMAIL_TEMPLATES = {
     # We have one or more possible jobs - show cards
     "confirm": """
-<p>Hi {sender_name},</p>
-<p>I'm not totally sure which job you mean. Do any of these look right?</p>
+<p style="margin: 0 0 20px 0;">I'm not totally sure which job you mean. Do any of these look right?</p>
 {job_cards}
-<p>Click a card to open it in Hub, or just reply with the job number and I'll get on with it.</p>
-<p>Dot</p>
+<p style="margin: 0 0 24px 0;">Click a card to open it in Hub, or just reply with the job number and I'll get on with it.</p>
+<p style="margin: 0;">Dot</p>
 """,
     
     # Can't identify client or intent at all
     "no_idea": """
-<p>Hi {sender_name},</p>
-<p>Throw me a bone here - I've got totally no idea what you're asking for.</p>
-<p>Come back to me with a job number, or a client - and I'll see what I can do.</p>
-<p>Dot</p>
+<p style="margin: 0 0 20px 0;">Throw me a bone here - I've got totally no idea what you're asking for.</p>
+<p style="margin: 0 0 24px 0;">Come back to me with a job number, or a client - and I'll see what I can do.</p>
+<p style="margin: 0;">Dot</p>
 """,
     
     # Job number provided but doesn't exist
     "job_not_found": """
-<p>Hi {sender_name},</p>
-<p>I couldn't find job <strong>{job_number}</strong> in the system.</p>
-<p>Please check the job number and try again, or reply <strong>TRIAGE</strong> if this is a new job.</p>
-<p>Dot</p>
+<p style="margin: 0 0 20px 0;">I couldn't find job <strong>{job_number}</strong> in the system.</p>
+<p style="margin: 0 0 24px 0;">Please check the job number and try again, or reply <strong>TRIAGE</strong> if this is a new job.</p>
+<p style="margin: 0;">Dot</p>
 """,
 }
 
@@ -172,9 +240,6 @@ def build_email(clarify_type, routing_data):
     template_type = type_mapping.get(clarify_type, clarify_type)
     template = EMAIL_TEMPLATES.get(template_type, EMAIL_TEMPLATES['no_idea'])
     
-    # Get sender name (default to "there")
-    sender_name = routing_data.get('senderName', '') or 'there'
-    
     # Build job cards if needed
     job_cards = ""
     if template_type == "confirm":
@@ -198,14 +263,13 @@ def build_email(clarify_type, routing_data):
     job_number = routing_data.get('jobNumber', '')
     
     # Format template
-    html = template.format(
-        sender_name=sender_name,
-        client_name=routing_data.get('clientName', 'your client'),
+    content = template.format(
         job_number=job_number,
         job_cards=job_cards
     )
     
-    return html.strip()
+    # Wrap with styling and footer
+    return _email_wrapper(content)
 
 
 # ===================
@@ -345,21 +409,33 @@ ROUTE_FRIENDLY_TEXT = {
     'work-to-client': 'Work sent to client logged',
 }
 
+ROUTE_SUBTITLE = {
+    'file': 'Filed to {destination}',
+    'update': 'Status updated',
+    'triage': 'New job created',
+    'incoming': 'Added to pipeline',
+    'feedback': 'Feedback recorded',
+    'work-to-client': 'Delivery logged',
+}
+
 # Routes that don't need confirmation (they already send emails)
 NO_CONFIRM_ROUTES = ['clarify', 'confirm', 'wip', 'todo', 'tracker']
 
 
-def send_confirmation(to_email, route, client_name=None, job_number=None, subject_line=None, files_url=None):
+def send_confirmation(to_email, route, client_name=None, job_number=None, job_name=None,
+                      subject_line=None, files_url=None, destination=None):
     """
-    Send a simple confirmation email after successful worker action.
+    Send a confirmation email after successful worker action.
     
     Args:
         to_email: Recipient email
         route: The route that was executed
         client_name: Client name (optional)
         job_number: Job number (optional)
+        job_name: Job name (optional)
         subject_line: Original email subject for Re: line
         files_url: SharePoint folder URL (optional)
+        destination: Where files were filed (optional)
     
     Returns:
         dict with result info
@@ -369,28 +445,41 @@ def send_confirmation(to_email, route, client_name=None, job_number=None, subjec
     
     friendly_text = ROUTE_FRIENDLY_TEXT.get(route, 'Request completed')
     
-    # Build the job/client line
-    context_parts = []
-    if client_name:
-        context_parts.append(client_name)
-    if job_number:
-        context_parts.append(job_number)
-    context_line = ' | '.join(context_parts) if context_parts else ''
+    # Build title line: "ONE 066 | Email Design System" or just "ONE 066"
+    if job_number and job_name:
+        box_title = f"{job_number} | {job_name}"
+    elif job_number:
+        box_title = job_number
+    elif client_name:
+        box_title = client_name
+    else:
+        box_title = "Done"
     
-    # Build email body
-    body_html = f"""
-<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0;">All sorted - {friendly_text.lower()}.</p>
-{f'<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0;"><strong>{context_line}</strong></p>' if context_line else ''}
-{f'<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0;"><a href="{files_url}" style="color: #ED1C24;">Get the files</a></p>' if files_url else ''}
-<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0;">Dot</p>
-"""
+    # Build subtitle
+    subtitle_template = ROUTE_SUBTITLE.get(route, 'Completed')
+    box_subtitle = subtitle_template.format(destination=destination or 'job folder')
+    
+    # Build files link if available
+    files_link = ''
+    if files_url:
+        files_link = f'<p style="margin: 0 0 24px 0;"><a href="{files_url}" style="color: #ED1C24; text-decoration: none; font-weight: 500;">See the files →</a></p>'
+    
+    # Build email content
+    content = f"""<p style="margin: 0 0 20px 0;">All sorted. {friendly_text}.</p>
+
+{_success_box(box_title, box_subtitle)}
+
+{files_link}
+<p style="margin: 0;">Dot</p>"""
+    
+    body_html = _email_wrapper(content)
     
     subject = f"Re: {subject_line}" if subject_line else "Dot - Done"
     
     postman_payload = {
         'to': to_email,
         'subject': subject,
-        'body': body_html.strip()
+        'body': body_html
     }
     
     print(f"[connect] Sending confirmation: {friendly_text} -> {to_email}")
@@ -433,7 +522,8 @@ def send_confirmation(to_email, route, client_name=None, job_number=None, subjec
 # FAILURE EMAILS
 # ===================
 
-def send_failure(to_email, route, error_message, subject_line=None, job_number=None, client_name=None):
+def send_failure(to_email, route, error_message, subject_line=None, job_number=None,
+                 job_name=None, client_name=None):
     """
     Send a failure notification email when a worker fails.
     
@@ -443,6 +533,7 @@ def send_failure(to_email, route, error_message, subject_line=None, job_number=N
         error_message: The error message from the worker
         subject_line: Original email subject
         job_number: Job number (optional)
+        job_name: Job name (optional)
         client_name: Client name (optional)
     
     Returns:
@@ -451,29 +542,45 @@ def send_failure(to_email, route, error_message, subject_line=None, job_number=N
     if route in NO_CONFIRM_ROUTES:
         return {'success': True, 'skipped': True, 'reason': 'Route sends its own email'}
     
-    # Build context line
-    context_parts = []
-    if client_name:
-        context_parts.append(client_name)
-    if job_number:
-        context_parts.append(job_number)
-    context_line = ' | '.join(context_parts) if context_parts else ''
+    # Build title line
+    if job_number and job_name:
+        box_title = f"{job_number} | {job_name}"
+    elif job_number:
+        box_title = job_number
+    elif client_name:
+        box_title = client_name
+    else:
+        box_title = "Error"
     
-    # Build email body with your copy
-    body_html = f"""
-<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0;">Sorry, I got in a muddle over that one. Couldn't do it.</p>
-{f'<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 16px 0;"><strong>{context_line}</strong></p>' if context_line else ''}
-<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0 0 8px 0;">Here's what I told myself in Dot Language:</p>
-<pre style="font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.4; background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; margin: 0 0 16px 0;">{error_message}</pre>
-<p style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.5; margin: 0;">Dot</p>
-"""
+    # Build subtitle based on route
+    route_action = {
+        'file': "Couldn't file attachments",
+        'update': "Couldn't update job",
+        'triage': "Couldn't create job",
+        'incoming': "Couldn't log incoming",
+        'feedback': "Couldn't log feedback",
+        'work-to-client': "Couldn't log delivery",
+    }
+    box_subtitle = route_action.get(route, "Something went wrong")
+    
+    # Build email content
+    content = f"""<p style="margin: 0 0 20px 0;">Sorry, I got in a muddle over that one.</p>
+
+{_failure_box(box_title, box_subtitle)}
+
+<p style="margin: 0 0 8px 0; font-size: 13px; color: #666;">Here's what I told myself in Dot Language:</p>
+<pre style="background: #f5f5f5; padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; color: #666; margin: 0 0 24px 0; font-family: 'SF Mono', Monaco, 'Courier New', monospace;">{error_message}</pre>
+
+<p style="margin: 0;">Dot</p>"""
+    
+    body_html = _email_wrapper(content)
     
     subject = f"Did not compute: {subject_line}" if subject_line else "Did not compute"
     
     postman_payload = {
         'to': to_email,
         'subject': subject,
-        'body': body_html.strip()
+        'body': body_html
     }
     
     print(f"[connect] Sending failure notification: {route} failed -> {to_email}")

@@ -54,7 +54,7 @@ def handle_traffic():
     2. Check for pending clarify reply
     3. Call Claude to identify client + intent (no pre-extraction)
     4. Fetch active jobs for Claude's identified client
-    5. If job-level intent with unclear job â†’ add possibleJobs
+    5. If job-level intent with unclear job Ã¢â€ â€™ add possibleJobs
     6. Validate and enrich with project data
     7. Log to Traffic table
     8. Build universal payload
@@ -85,17 +85,8 @@ def handle_traffic():
         received_datetime = data.get('receivedDateTime', '')
         
         # ===================
-        # STEP 1: CHECK SENDER
+        # STEP 1: CHECK SENDER DOMAIN
         # ===================
-        # Ignore emails FROM dot@ (prevents email loops)
-        if sender_email.lower() == 'dot@hunch.co.nz':
-            return jsonify({
-                'route': 'self',
-                'status': 'ignored',
-                'reason': 'Ignoring email from Dot to prevent loops',
-                'senderEmail': sender_email
-            })
-        
         # Only process emails from @hunch.co.nz
         if not sender_email.lower().endswith('@hunch.co.nz'):
             airtable.log_traffic(
@@ -292,16 +283,20 @@ def handle_traffic():
         # ===================
         confirmation_result = None
         if worker_result.get('success'):
-            # Get files URL from worker response if available
-            files_url = worker_result.get('response', {}).get('folderUrl') if isinstance(worker_result.get('response'), dict) else None
+            # Get files URL and destination from worker response if available
+            worker_response = worker_result.get('response', {}) if isinstance(worker_result.get('response'), dict) else {}
+            files_url = worker_response.get('folderUrl')
+            destination = worker_response.get('destination')
             
             confirmation_result = connect.send_confirmation(
                 to_email=sender_email,
                 route=route,
                 client_name=routing.get('clientName'),
                 job_number=routing.get('jobNumber'),
+                job_name=routing.get('jobName'),
                 subject_line=subject,
-                files_url=files_url
+                files_url=files_url,
+                destination=destination
             )
         else:
             # Worker failed - send failure notification
@@ -312,6 +307,7 @@ def handle_traffic():
                 error_message=str(error_message),
                 subject_line=subject,
                 job_number=routing.get('jobNumber'),
+                job_name=routing.get('jobName'),
                 client_name=routing.get('clientName')
             )
         
