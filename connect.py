@@ -330,3 +330,105 @@ def call_postman(route, payload):
             'error': str(e),
             'would_send': postman_payload
         }
+
+
+# ===================
+# CONFIRMATION EMAILS
+# ===================
+
+ROUTE_FRIENDLY_TEXT = {
+    'file': 'Files filed',
+    'update': 'Job updated',
+    'triage': 'Job triaged',
+    'incoming': 'Incoming job logged',
+    'feedback': 'Feedback logged',
+    'work-to-client': 'Work sent to client logged',
+}
+
+# Routes that don't need confirmation (they already send emails)
+NO_CONFIRM_ROUTES = ['clarify', 'confirm', 'wip', 'todo', 'tracker']
+
+
+def send_confirmation(to_email, route, client_name=None, job_number=None, subject_line=None, files_url=None):
+    """
+    Send a simple confirmation email after successful worker action.
+    
+    Args:
+        to_email: Recipient email
+        route: The route that was executed
+        client_name: Client name (optional)
+        job_number: Job number (optional)
+        subject_line: Original email subject for Re: line
+        files_url: SharePoint folder URL (optional)
+    
+    Returns:
+        dict with result info
+    """
+    if route in NO_CONFIRM_ROUTES:
+        return {'success': True, 'skipped': True, 'reason': 'Route sends its own email'}
+    
+    friendly_text = ROUTE_FRIENDLY_TEXT.get(route, 'Request completed')
+    
+    # Build the job/client line
+    context_parts = []
+    if client_name:
+        context_parts.append(client_name)
+    if job_number:
+        context_parts.append(job_number)
+    context_line = ' | '.join(context_parts) if context_parts else ''
+    
+    # Build files link if available
+    files_link = ''
+    if files_url:
+        files_link = f'<p><a href="{files_url}">Get the files</a></p>'
+    
+    # Build email body
+    body_html = f"""
+<p>All sorted - {friendly_text.lower()}.</p>
+{f'<p><strong>{context_line}</strong></p>' if context_line else ''}
+{files_link}
+<p>Dot</p>
+"""
+    
+    subject = f"Re: {subject_line}" if subject_line else "Dot - Done"
+    
+    postman_payload = {
+        'to': to_email,
+        'subject': subject,
+        'body': body_html.strip()
+    }
+    
+    print(f"[connect] Sending confirmation: {friendly_text} -> {to_email}")
+    
+    if not PA_POSTMAN_URL:
+        return {
+            'success': False,
+            'status': 'testing',
+            'error': 'PA_POSTMAN_URL not configured',
+            'would_send': postman_payload
+        }
+    
+    try:
+        response = httpx.post(
+            PA_POSTMAN_URL,
+            json=postman_payload,
+            timeout=TIMEOUT,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        return {
+            'success': response.status_code == 200 or response.status_code == 202,
+            'status': 'live',
+            'endpoint': 'PA_POSTMAN',
+            'response_code': response.status_code
+        }
+        
+    except Exception as e:
+        print(f"[connect] Error sending confirmation: {e}")
+        return {
+            'success': False,
+            'status': 'testing',
+            'endpoint': 'PA_POSTMAN',
+            'error': str(e),
+            'would_send': postman_payload
+        }
