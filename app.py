@@ -283,12 +283,16 @@ def handle_traffic():
         # ===================
         confirmation_result = None
         if worker_result.get('success'):
+            # Get files URL from worker response if available
+            files_url = worker_result.get('response', {}).get('folderUrl') if isinstance(worker_result.get('response'), dict) else None
+            
             confirmation_result = connect.send_confirmation(
                 to_email=sender_email,
                 route=route,
                 client_name=routing.get('clientName'),
                 job_number=routing.get('jobNumber'),
-                subject_line=subject
+                subject_line=subject,
+                files_url=files_url
             )
         
         # ===================
