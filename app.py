@@ -54,7 +54,7 @@ def handle_traffic():
     2. Check for pending clarify reply
     3. Call Claude to identify client + intent (no pre-extraction)
     4. Fetch active jobs for Claude's identified client
-    5. If job-level intent with unclear job → add possibleJobs
+    5. If job-level intent with unclear job â†’ add possibleJobs
     6. Validate and enrich with project data
     7. Log to Traffic table
     8. Build universal payload
@@ -279,7 +279,7 @@ def handle_traffic():
         worker_result = connect.call_worker(route, payload)
         
         # ===================
-        # STEP 12: SEND CONFIRMATION EMAIL
+        # STEP 12: SEND CONFIRMATION OR FAILURE EMAIL
         # ===================
         confirmation_result = None
         if worker_result.get('success'):
@@ -293,6 +293,17 @@ def handle_traffic():
                 job_number=routing.get('jobNumber'),
                 subject_line=subject,
                 files_url=files_url
+            )
+        else:
+            # Worker failed - send failure notification
+            error_message = worker_result.get('error') or worker_result.get('response') or 'Unknown error'
+            confirmation_result = connect.send_failure(
+                to_email=sender_email,
+                route=route,
+                error_message=str(error_message),
+                subject_line=subject,
+                job_number=routing.get('jobNumber'),
+                client_name=routing.get('clientName')
             )
         
         # ===================

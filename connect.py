@@ -432,3 +432,86 @@ def send_confirmation(to_email, route, client_name=None, job_number=None, subjec
             'error': str(e),
             'would_send': postman_payload
         }
+
+
+# ===================
+# FAILURE EMAILS
+# ===================
+
+def send_failure(to_email, route, error_message, subject_line=None, job_number=None, client_name=None):
+    """
+    Send a failure notification email when a worker fails.
+    
+    Args:
+        to_email: Recipient email
+        route: The route that failed
+        error_message: The error message from the worker
+        subject_line: Original email subject
+        job_number: Job number (optional)
+        client_name: Client name (optional)
+    
+    Returns:
+        dict with result info
+    """
+    if route in NO_CONFIRM_ROUTES:
+        return {'success': True, 'skipped': True, 'reason': 'Route sends its own email'}
+    
+    # Build context line
+    context_parts = []
+    if client_name:
+        context_parts.append(client_name)
+    if job_number:
+        context_parts.append(job_number)
+    context_line = ' | '.join(context_parts) if context_parts else ''
+    
+    # Build email body with your copy
+    body_html = f"""
+<p>Sorry, I got in a muddle over that one. Couldn't do it.</p>
+{f'<p><strong>{context_line}</strong></p>' if context_line else ''}
+<p>Here's what I told myself in Dot Language:</p>
+<pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px; overflow-x: auto;">{error_message}</pre>
+<p>Dot</p>
+"""
+    
+    subject = f"Did not compute: {subject_line}" if subject_line else "Did not compute"
+    
+    postman_payload = {
+        'to': to_email,
+        'subject': subject,
+        'body': body_html.strip()
+    }
+    
+    print(f"[connect] Sending failure notification: {route} failed -> {to_email}")
+    
+    if not PA_POSTMAN_URL:
+        return {
+            'success': False,
+            'status': 'testing',
+            'error': 'PA_POSTMAN_URL not configured',
+            'would_send': postman_payload
+        }
+    
+    try:
+        response = httpx.post(
+            PA_POSTMAN_URL,
+            json=postman_payload,
+            timeout=TIMEOUT,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        return {
+            'success': response.status_code == 200 or response.status_code == 202,
+            'status': 'live',
+            'endpoint': 'PA_POSTMAN',
+            'response_code': response.status_code
+        }
+        
+    except Exception as e:
+        print(f"[connect] Error sending failure notification: {e}")
+        return {
+            'success': False,
+            'status': 'testing',
+            'endpoint': 'PA_POSTMAN',
+            'error': str(e),
+            'would_send': postman_payload
+        }
