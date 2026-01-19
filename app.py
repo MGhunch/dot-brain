@@ -299,7 +299,11 @@ def handle_traffic():
                 clarify_type = 'confirm'
             payload['emailHtml'] = connect.build_email(clarify_type, {
                 **routing,
-                'senderName': sender_name
+                'senderName': sender_name,
+                'senderEmail': sender_email,
+                'subjectLine': subject,
+                'receivedDateTime': received_datetime,
+                'emailContent': content
             })
         
         # ===================
@@ -323,8 +327,29 @@ def handle_traffic():
                 # Hub - just return, frontend will render the message/cards
                 worker_result = {'success': True, 'status': 'pending_user_input'}
         elif response_type == 'answer':
-            # Just answering - no worker needed (Hub will render the message)
-            worker_result = {'success': True, 'status': 'answered'}
+            if source == 'email':
+                # Build original email data for trail
+                original_email_data = {
+                    'senderName': sender_name,
+                    'senderEmail': sender_email,
+                    'subject': subject,
+                    'receivedDateTime': received_datetime,
+                    'content': content
+                }
+                
+                # Send answer email via PA Postman
+                worker_result = connect.send_answer(
+                    to_email=sender_email,
+                    message=routing.get('message', ''),
+                    sender_name=sender_name,
+                    subject_line=subject,
+                    client_code=routing.get('clientCode'),
+                    client_name=routing.get('clientName'),
+                    original_email=original_email_data
+                )
+            else:
+                # Hub - just return, frontend will render the message
+                worker_result = {'success': True, 'status': 'answered'}
         elif response_type == 'redirect':
             # Redirecting to WIP/Tracker - no worker needed
             worker_result = {'success': True, 'status': 'redirected'}
@@ -346,24 +371,48 @@ def handle_traffic():
                 # Get files URL from worker response if available
                 files_url = worker_result.get('response', {}).get('folderUrl') if isinstance(worker_result.get('response'), dict) else None
                 
+                # Build original email data for trail
+                original_email_data = {
+                    'senderName': sender_name,
+                    'senderEmail': sender_email,
+                    'subject': subject,
+                    'receivedDateTime': received_datetime,
+                    'content': content
+                }
+                
                 confirmation_result = connect.send_confirmation(
                     to_email=sender_email,
                     route=route,
+                    sender_name=sender_name,
                     client_name=routing.get('clientName'),
                     job_number=routing.get('jobNumber'),
+                    job_name=routing.get('jobName'),
                     subject_line=subject,
-                    files_url=files_url
+                    files_url=files_url,
+                    original_email=original_email_data
                 )
             elif worker_result:
                 # Worker failed - send failure notification
                 error_message = worker_result.get('error') or worker_result.get('response') or 'Unknown error'
+                # Build original email data for trail
+                original_email_data = {
+                    'senderName': sender_name,
+                    'senderEmail': sender_email,
+                    'subject': subject,
+                    'receivedDateTime': received_datetime,
+                    'content': content
+                }
+                
                 confirmation_result = connect.send_failure(
                     to_email=sender_email,
                     route=route,
                     error_message=str(error_message),
+                    sender_name=sender_name,
                     subject_line=subject,
                     job_number=routing.get('jobNumber'),
-                    client_name=routing.get('clientName')
+                    job_name=routing.get('jobName'),
+                    client_name=routing.get('clientName'),
+                    original_email=original_email_data
                 )
         
         # ===================

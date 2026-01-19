@@ -623,11 +623,22 @@ Email content:
                     })
             
             # Add assistant's tool use to messages
-            messages.append({'role': 'assistant', 'content': [
-                {'type': b.type, 'id': getattr(b, 'id', None), 'name': getattr(b, 'name', None), 
-                 'input': getattr(b, 'input', None), 'text': getattr(b, 'text', None)}
-                for b in content_blocks
-            ]})
+            # Format each block correctly based on its type
+            assistant_content = []
+            for b in content_blocks:
+                if b.type == 'tool_use':
+                    assistant_content.append({
+                        'type': 'tool_use',
+                        'id': b.id,
+                        'name': b.name,
+                        'input': b.input
+                    })
+                elif b.type == 'text':
+                    assistant_content.append({
+                        'type': 'text',
+                        'text': b.text
+                    })
+            messages.append({'role': 'assistant', 'content': assistant_content})
             messages.append({'role': 'user', 'content': tool_results})
             
             # Second Claude call with tool results
