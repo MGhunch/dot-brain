@@ -155,9 +155,10 @@ def handle_traffic():
         routing = traffic.route_email(data)
         
         print(f"[app] Claude identified client: {routing.get('clientCode')}")
-        print(f"[app] Claude identified intent: {routing.get('route')}")
+        print(f"[app] Claude identified type: {routing.get('type')}")
+        print(f"[app] Claude identified route: {routing.get('route')}")
         
-        if routing.get('route') == 'error':
+        if routing.get('type') == 'error' or routing.get('route') == 'error':
             return jsonify(routing), 500
         
         # ===================
@@ -185,12 +186,13 @@ def handle_traffic():
                 # Claude identified a specific job - validate it
                 project = airtable.get_project(job_number)
                 if project:
-                    # Valid job - enrich routing
+                    # Valid job - enrich routing and ensure type is action
+                    routing['type'] = 'action'
                     routing = enrich_with_project(routing, project)
                     print(f"[app] Validated job: {job_number}")
                 else:
                     # Job not found
-                    routing['route'] = 'clarify'
+                    routing['type'] = 'clarify'
                     routing['confidence'] = 'low'
                     routing['clarifyType'] = 'job_not_found'
                     routing['reason'] = f"Job {job_number} not found in system"
@@ -202,6 +204,7 @@ def handle_traffic():
                     # Only one job - assume it's the one
                     project = airtable.get_project(active_jobs[0]['jobNumber'])
                     if project:
+                        routing['type'] = 'action'
                         routing['jobNumber'] = active_jobs[0]['jobNumber']
                         routing['confidence'] = 'high'
                         routing['reason'] = f"Only one active {client_code} job"
@@ -209,16 +212,15 @@ def handle_traffic():
                         print(f"[app] Single job match: {active_jobs[0]['jobNumber']}")
                 else:
                     # Multiple jobs - need to confirm
-                    routing['route'] = 'confirm'
+                    routing['type'] = 'confirm'
                     routing['confidence'] = 'medium'
-                    routing['clarifyType'] = 'confirm'
                     routing['possibleJobs'] = active_jobs[:5]  # Max 5
                     routing['originalIntent'] = routing.get('route', 'update')
                     print(f"[app] Multiple jobs - confirming with {len(active_jobs)} options")
             
             elif not client_code:
                 # No client, no job - truly no idea
-                routing['route'] = 'clarify'
+                routing['type'] = 'clarify'
                 routing['confidence'] = 'low'
                 routing['clarifyType'] = 'no_idea'
                 print(f"[app] No client identified - clarifying")
@@ -230,12 +232,14 @@ def handle_traffic():
         
         if routing.get('route') in client_level_intents:
             if not client_code:
-                routing['route'] = 'clarify'
+                routing['type'] = 'clarify'
                 routing['confidence'] = 'low'
                 routing['clarifyType'] = 'no_idea'
                 routing['reason'] = 'Could not identify client for this request'
                 print(f"[app] Client-level intent but no client - clarifying")
             else:
+                # Valid client-level action
+                routing['type'] = 'action'
                 # Get client name for enrichment
                 client_name = airtable.get_client_name(client_code)
                 if client_name:
@@ -244,13 +248,25 @@ def handle_traffic():
         # ===================
         # STEP 8: LOG TO TRAFFIC TABLE
         # ===================
+        # Determine response type - with backwards compatibility
+        response_type = routing.get('type')
         route = routing.get('route', 'unknown')
-        status = 'pending' if route in ['clarify', 'confirm'] else 'processed'
+        
+        if not response_type:
+            # Backwards compat: infer type from route
+            if route in ['clarify', 'confirm']:
+                response_type = route
+            else:
+                response_type = 'action'
+        
+        # For logging, use type if it's clarify/confirm, otherwise use route
+        log_route = response_type if response_type in ['clarify', 'confirm'] else route
+        status = 'pending' if response_type in ['clarify', 'confirm'] else 'processed'
         
         airtable.log_traffic(
             internet_message_id,
             conversation_id,
-            route,
+            log_route,
             status,
             routing.get('jobNumber'),
             routing.get('clientCode'),
@@ -264,64 +280,101 @@ def handle_traffic():
         payload = build_universal_payload(data, routing)
         
         # ===================
-        # STEP 10: BUILD EMAIL (if clarify/confirm)
+        # STEP 10: BUILD EMAIL (if clarify/confirm AND email source)
         # ===================
-        if route in ['clarify', 'confirm']:
+        if response_type in ['clarify', 'confirm'] and source == 'email':
             clarify_type = routing.get('clarifyType', 'no_idea')
+            # For confirm, use 'confirm' as the template type
+            if response_type == 'confirm':
+                clarify_type = 'confirm'
             payload['emailHtml'] = connect.build_email(clarify_type, {
                 **routing,
                 'senderName': sender_name
             })
         
         # ===================
-        # STEP 11: CALL DOWNSTREAM
+        # STEP 11: CALL DOWNSTREAM (source-aware)
         # ===================
-        worker_result = connect.call_worker(route, payload)
+        worker_result = None
+        
+        if response_type == 'action':
+            if source == 'email':
+                # Route to worker
+                worker_result = connect.call_worker(route, payload)
+            else:
+                # Hub - don't call workers, return for user to act on
+                # (e.g., show job card for them to update themselves)
+                worker_result = {'success': True, 'status': 'user_action_required'}
+        elif response_type in ['clarify', 'confirm']:
+            if source == 'email':
+                # Send clarification email via PA Postman
+                worker_result = connect.call_worker(response_type, payload)
+            else:
+                # Hub - just return, frontend will render the message/cards
+                worker_result = {'success': True, 'status': 'pending_user_input'}
+        elif response_type == 'answer':
+            # Just answering - no worker needed (Hub will render the message)
+            worker_result = {'success': True, 'status': 'answered'}
+        elif response_type == 'redirect':
+            # Redirecting to WIP/Tracker - no worker needed
+            worker_result = {'success': True, 'status': 'redirected'}
+        else:
+            # Unknown type - try calling as route for backwards compat (email only)
+            if source == 'email':
+                worker_result = connect.call_worker(route, payload)
+            else:
+                worker_result = {'success': False, 'status': 'unknown_type', 'error': f'Unknown type: {response_type}'}
         
         # ===================
-        # STEP 12: SEND CONFIRMATION OR FAILURE EMAIL
+        # STEP 12: SEND CONFIRMATION OR FAILURE EMAIL (email source only)
         # ===================
         confirmation_result = None
-        if worker_result.get('success'):
-            # Get files URL and destination from worker response if available
-            worker_response = worker_result.get('response', {}) if isinstance(worker_result.get('response'), dict) else {}
-            files_url = worker_response.get('folderUrl')
-            destination = worker_response.get('destination')
-            
-            confirmation_result = connect.send_confirmation(
-                to_email=sender_email,
-                route=route,
-                client_name=routing.get('clientName'),
-                job_number=routing.get('jobNumber'),
-                job_name=routing.get('jobName'),
-                subject_line=subject,
-                files_url=files_url,
-                destination=destination
-            )
-        else:
-            # Worker failed - send failure notification
-            error_message = worker_result.get('error') or worker_result.get('response') or 'Unknown error'
-            confirmation_result = connect.send_failure(
-                to_email=sender_email,
-                route=route,
-                error_message=str(error_message),
-                subject_line=subject,
-                job_number=routing.get('jobNumber'),
-                job_name=routing.get('jobName'),
-                client_name=routing.get('clientName')
-            )
+        
+        # Only send confirmation emails for email source actions
+        if source == 'email' and response_type == 'action':
+            if worker_result and worker_result.get('success'):
+                # Get files URL from worker response if available
+                files_url = worker_result.get('response', {}).get('folderUrl') if isinstance(worker_result.get('response'), dict) else None
+                
+                confirmation_result = connect.send_confirmation(
+                    to_email=sender_email,
+                    route=route,
+                    client_name=routing.get('clientName'),
+                    job_number=routing.get('jobNumber'),
+                    subject_line=subject,
+                    files_url=files_url
+                )
+            elif worker_result:
+                # Worker failed - send failure notification
+                error_message = worker_result.get('error') or worker_result.get('response') or 'Unknown error'
+                confirmation_result = connect.send_failure(
+                    to_email=sender_email,
+                    route=route,
+                    error_message=str(error_message),
+                    subject_line=subject,
+                    job_number=routing.get('jobNumber'),
+                    client_name=routing.get('clientName')
+                )
         
         # ===================
         # RETURN RESPONSE
         # ===================
         return jsonify({
+            'type': response_type,
             'route': route,
             'confidence': routing.get('confidence', 'unknown'),
             'reason': routing.get('reason', ''),
+            'message': routing.get('message', ''),
             'jobNumber': routing.get('jobNumber'),
             'clientCode': routing.get('clientCode'),
             'clientName': routing.get('clientName'),
             'intent': routing.get('intent'),
+            'jobs': routing.get('jobs') or routing.get('possibleJobs'),
+            'originalIntent': routing.get('originalIntent'),
+            'clarifyType': routing.get('clarifyType'),
+            'redirectTo': routing.get('redirectTo'),
+            'redirectParams': routing.get('redirectParams'),
+            'nextPrompt': routing.get('nextPrompt'),
             'worker': worker_result,
             'confirmation': confirmation_result,
             'payload': payload
@@ -532,10 +585,12 @@ def build_universal_payload(email_data, routing):
     """
     return {
         # Routing
+        'type': routing.get('type', 'action'),
         'route': routing.get('route'),
         'confidence': routing.get('confidence'),
         'reasoning': routing.get('reason', ''),
         'intent': routing.get('intent'),
+        'message': routing.get('message', ''),
         
         # Job
         'jobNumber': routing.get('jobNumber'),
@@ -570,11 +625,19 @@ def build_universal_payload(email_data, routing):
         'receivedDateTime': email_data.get('receivedDateTime', ''),
         'source': email_data.get('source', 'email'),
         
-        # Clarify-specific
+        # Clarify/Confirm-specific
         'clarifyType': routing.get('clarifyType'),
         'possibleJobs': routing.get('possibleJobs'),
+        'jobs': routing.get('jobs'),
         'suggestedJob': routing.get('suggestedJob'),
         'originalIntent': routing.get('originalIntent'),
+        
+        # Redirect-specific
+        'redirectTo': routing.get('redirectTo'),
+        'redirectParams': routing.get('redirectParams'),
+        
+        # Hub-specific
+        'nextPrompt': routing.get('nextPrompt'),
     }
 
 
