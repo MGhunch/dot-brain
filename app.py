@@ -54,7 +54,7 @@ def handle_traffic():
     2. Check for pending clarify reply
     3. Call Claude to identify client + intent (no pre-extraction)
     4. Fetch active jobs for Claude's identified client
-    5. If job-level intent with unclear job Ã¢â€ â€™ add possibleJobs
+    5. If job-level intent with unclear job ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ add possibleJobs
     6. Validate and enrich with project data
     7. Log to Traffic table
     8. Build universal payload
@@ -85,7 +85,17 @@ def handle_traffic():
         received_datetime = data.get('receivedDateTime', '')
         
         # ===================
-        # STEP 1: CHECK SENDER DOMAIN
+        # STEP 1: IGNORE DOT'S OWN EMAILS (prevent loops)
+        # ===================
+        if sender_email.lower() == 'dot@hunch.co.nz':
+            return jsonify({
+                'route': 'ignored',
+                'status': 'self',
+                'reason': 'Ignoring email from Dot to prevent loops'
+            })
+        
+        # ===================
+        # STEP 2: CHECK SENDER DOMAIN
         # ===================
         # Only process emails from @hunch.co.nz
         if not sender_email.lower().endswith('@hunch.co.nz'):
