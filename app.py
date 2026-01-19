@@ -54,7 +54,7 @@ def handle_traffic():
     2. Check for pending clarify reply
     3. Call Claude to identify client + intent (no pre-extraction)
     4. Fetch active jobs for Claude's identified client
-    5. If job-level intent with unclear job ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ add possibleJobs
+    5. If job-level intent with unclear job ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ add possibleJobs
     6. Validate and enrich with project data
     7. Log to Traffic table
     8. Build universal payload
@@ -270,7 +270,7 @@ def handle_traffic():
                 response_type = 'action'
         
         # For logging, use type if it's clarify/confirm, otherwise use route
-        log_route = response_type if response_type in ['clarify', 'confirm'] else route
+        log_route = response_type if response_type in ['clarify', 'confirm', 'answer', 'redirect'] else route
         status = 'pending' if response_type in ['clarify', 'confirm'] else 'processed'
         
         airtable.log_traffic(
@@ -351,8 +351,30 @@ def handle_traffic():
                 # Hub - just return, frontend will render the message
                 worker_result = {'success': True, 'status': 'answered'}
         elif response_type == 'redirect':
-            # Redirecting to WIP/Tracker - no worker needed
-            worker_result = {'success': True, 'status': 'redirected'}
+            if source == 'email':
+                # Build original email data for trail
+                original_email_data = {
+                    'senderName': sender_name,
+                    'senderEmail': sender_email,
+                    'subject': subject,
+                    'receivedDateTime': received_datetime,
+                    'content': content
+                }
+                
+                # Send redirect email via PA Postman
+                worker_result = connect.send_redirect(
+                    to_email=sender_email,
+                    message=routing.get('message', ''),
+                    sender_name=sender_name,
+                    subject_line=subject,
+                    client_code=routing.get('clientCode'),
+                    client_name=routing.get('clientName'),
+                    redirect_to=routing.get('redirectTo', 'WIP'),
+                    original_email=original_email_data
+                )
+            else:
+                # Hub - just return, frontend will render the redirect
+                worker_result = {'success': True, 'status': 'redirected'}
         else:
             # Unknown type - try calling as route for backwards compat (email only)
             if source == 'email':
