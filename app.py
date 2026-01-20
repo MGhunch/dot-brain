@@ -54,7 +54,7 @@ def handle_traffic():
     2. Check for pending clarify reply
     3. Call Claude to identify client + intent (no pre-extraction)
     4. Fetch active jobs for Claude's identified client
-    5. If job-level intent with unclear job ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ add possibleJobs
+    5. If job-level intent with unclear job ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ add possibleJobs
     6. Validate and enrich with project data
     7. Log to Traffic table
     8. Build universal payload
@@ -66,8 +66,8 @@ def handle_traffic():
         # ===================
         # VALIDATE INPUT
         # ===================
-        # Accept both our names and PA's names for flexibility
-        content = data.get('body') or data.get('emailContent', '')
+        # Accept Hub's 'content', PA's 'body', or legacy 'emailContent'
+        content = data.get('content') or data.get('body') or data.get('emailContent', '')
         if not content:
             return jsonify({'error': 'No email body provided'}), 400
         

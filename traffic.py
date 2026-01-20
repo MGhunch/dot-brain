@@ -3,8 +3,8 @@ Dot Traffic - Unified Brain
 Routes requests, answers questions, calls workers.
 
 UNIFIED: Handles both email and hub sources.
-- Email: PA Listener â†’ /traffic â†’ workers
-- Hub: Ask Dot â†’ /traffic â†’ response
+- Email: PA Listener Ã¢â€ â€™ /traffic Ã¢â€ â€™ workers
+- Hub: Ask Dot Ã¢â€ â€™ /traffic Ã¢â€ â€™ response
 
 One brain. Two inputs. Same Dot.
 """
@@ -711,7 +711,8 @@ def route_email(email_data, active_jobs=None):
     Legacy function for backwards compatibility.
     Wraps route_request with email defaults.
     """
-    email_data['source'] = 'email'
+    if 'source' not in email_data:
+        email_data['source'] = 'email'  # Only default if not set
     result = route_request(email_data, active_jobs)
     
     # Map new response format to old format for backwards compatibility
