@@ -752,6 +752,14 @@ Email content:
                 break
         
         result_text = strip_markdown_json(result_text)
+        
+        # If Claude returned text + JSON, extract just the JSON
+        if result_text and not result_text.strip().startswith('{'):
+            json_match = re.search(r'\{[\s\S]*\}', result_text)
+            if json_match:
+                print(f"[traffic] Extracting JSON from mixed response")
+                result_text = json_match.group()
+        
         routing = json.loads(result_text)
         
         # Debug logging - Claude's decision
