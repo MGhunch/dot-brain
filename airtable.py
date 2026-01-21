@@ -268,6 +268,69 @@ def get_active_jobs(client_code):
         return []
 
 
+def update_project_record(job_number, updates):
+    """
+    Update a project's fields by job number.
+    Used by Hub card-update (modal) for direct field updates.
+    
+    Args:
+        job_number: e.g., 'LAB 055'
+        updates: dict of Airtable field names to values, e.g.:
+            {
+                'Stage': 'Craft',
+                'Status': 'In Progress',
+                'With Client?': True,
+                'Update Due': '2026-01-25',
+                'Live Date': '2026-02-15',
+                'Description': 'Updated description',
+                'Project Owner': 'Sarah',
+                'Project Name': 'New name'
+            }
+    
+    Returns:
+        dict with 'success': True/False and 'updated': list of field names
+    """
+    if not AIRTABLE_API_KEY or not job_number:
+        return {'success': False, 'error': 'Missing API key or job number'}
+    
+    try:
+        # Find the project record
+        params = {
+            'filterByFormula': f"{{Job Number}}='{job_number}'",
+            'maxRecords': 1
+        }
+        
+        response = httpx.get(
+            _url(PROJECTS_TABLE),
+            headers=_headers(),
+            params=params,
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            return {'success': False, 'error': f'Job {job_number} not found'}
+        
+        record_id = records[0]['id']
+        
+        # Update the record
+        response = httpx.patch(
+            f"{_url(PROJECTS_TABLE)}/{record_id}",
+            headers=_headers(),
+            json={'fields': updates},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        print(f"[airtable] Updated project {job_number}: {list(updates.keys())}")
+        return {'success': True, 'updated': list(updates.keys())}
+        
+    except Exception as e:
+        print(f"[airtable] Error updating project record: {e}")
+        return {'success': False, 'error': str(e)}
+
+
 # ===================
 # CLIENTS TABLE
 # ===================
