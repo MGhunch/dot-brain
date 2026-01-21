@@ -163,10 +163,19 @@ WORK-TO-CLIENT - Sending deliverables to client
 
 === TOOLS (For Answering Questions) ===
 
-get_active_jobs - Get all active jobs for a client
+get_all_active_jobs - Get ALL jobs across ALL clients in one call (~20 jobs)
+  "What's due today?" -> fetch everything, filter for today
+  "What's on this week?" -> fetch everything, find upcoming
+  USE THIS for cross-client questions - more efficient than multiple calls
+
+get_active_jobs - Get all active jobs for a specific client
   "Update the Tower job" -> fetch Tower jobs, find the match
   "What's happening with Sky?" -> fetch Sky jobs to answer
   USE THIS when you know the client but need to find/confirm a job
+
+get_job_by_number - Get a specific job by number
+  "Tell me about LAB 055" -> fetch that exact job
+  USE THIS when you have an exact job number
 
 search_people - Find contacts, emails, phone numbers
   "What's Sarah's email at Tower?"

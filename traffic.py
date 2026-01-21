@@ -430,7 +430,7 @@ CLAUDE_TOOLS = [
     },
     {
         "name": "get_active_jobs",
-        "description": "Get all active (non-completed) jobs for a client. Use this when you know the client but need to find or confirm which job. Returns job numbers, names, descriptions, stage, status, and due dates.",
+        "description": "Get all active (non-completed) jobs for a specific client. Use this when you know which client and need to see their jobs. Returns job numbers, names, descriptions, stage, status, and due dates.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -440,6 +440,29 @@ CLAUDE_TOOLS = [
                 }
             },
             "required": ["client_code"]
+        }
+    },
+    {
+        "name": "get_all_active_jobs",
+        "description": "Get ALL active jobs across ALL clients in one call. Use this for cross-client queries like 'What's due today?' or 'What's on this week?' - returns ~20 jobs total. More efficient than calling get_active_jobs multiple times.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "get_job_by_number",
+        "description": "Get a specific job by its job number (e.g., 'LAB 055' or 'SKY 042'). Use this when you have an exact job number and need its details.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_number": {
+                    "type": "string",
+                    "description": "The job number (e.g., 'LAB 055', 'SKY 042')"
+                }
+            },
+            "required": ["job_number"]
         }
     }
 ]
@@ -468,6 +491,17 @@ def execute_tool(tool_name, tool_input):
         import airtable
         jobs = airtable.get_active_jobs(tool_input.get('client_code'))
         result = {'jobs': jobs, 'count': len(jobs)}
+    elif tool_name == "get_all_active_jobs":
+        import airtable
+        jobs = airtable.get_all_active_jobs()
+        result = {'jobs': jobs, 'count': len(jobs)}
+    elif tool_name == "get_job_by_number":
+        import airtable
+        job = airtable.get_job_by_number(tool_input.get('job_number'))
+        if job:
+            result = {'job': job, 'found': True}
+        else:
+            result = {'job': None, 'found': False, 'message': f"Job {tool_input.get('job_number')} not found"}
     else:
         result = {'error': f'Unknown tool: {tool_name}'}
     
@@ -674,8 +708,39 @@ Email content:
                 messages=messages
             )
         
-        if tool_rounds >= max_tool_rounds:
-            print(f"[traffic] Warning: Hit max tool rounds ({max_tool_rounds})")
+        # If we hit max rounds and Claude still wants tools, force a final answer
+        if tool_rounds >= max_tool_rounds and response.stop_reason == 'tool_use':
+            print(f"[traffic] Hit max tool rounds ({max_tool_rounds}), forcing final answer")
+            
+            # Add Claude's last response to messages
+            assistant_content = []
+            for b in response.content:
+                if b.type == 'tool_use':
+                    assistant_content.append({
+                        'type': 'tool_use',
+                        'id': b.id,
+                        'name': b.name,
+                        'input': b.input
+                    })
+                elif b.type == 'text':
+                    assistant_content.append({
+                        'type': 'text',
+                        'text': b.text
+                    })
+            messages.append({'role': 'assistant', 'content': assistant_content})
+            
+            # Tell Claude to wrap up with what it has
+            messages.append({'role': 'user', 'content': "You've gathered enough information. Please provide your final JSON response now based on what you have."})
+            
+            # Final call WITHOUT tools to force JSON response
+            response = anthropic_client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=1500,
+                temperature=0.1,
+                system=TRAFFIC_PROMPT,
+                messages=messages  # No tools parameter = must respond with text
+            )
+            print(f"[traffic] Forced final response, stop_reason: {response.stop_reason}")
         
         content_blocks = response.content
         

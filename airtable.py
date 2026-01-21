@@ -269,6 +269,106 @@ def get_active_jobs(client_code):
         return []
 
 
+def get_all_active_jobs():
+    """
+    Get ALL active jobs across ALL clients.
+    Returns list of job dicts - typically ~20 jobs total.
+    Use this for cross-client queries like "What's due today?"
+    """
+    if not AIRTABLE_API_KEY:
+        return []
+    
+    try:
+        # Get all jobs that are NOT completed
+        filter_formula = "{Status}!='Completed'"
+        params = {'filterByFormula': filter_formula}
+        
+        print(f"[airtable] Fetching all active jobs across all clients")
+        
+        response = httpx.get(
+            _url(PROJECTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        
+        print(f"[airtable] Found {len(records)} total active jobs")
+        
+        jobs = []
+        for record in records:
+            fields = record.get('fields', {})
+            jobs.append({
+                'jobNumber': fields.get('Job Number', ''),
+                'jobName': fields.get('Project Name', ''),
+                'description': fields.get('Description', ''),
+                'stage': fields.get('Stage', ''),
+                'status': fields.get('Status', ''),
+                'updateDue': fields.get('Update due friendly', ''),
+                'withClient': fields.get('With Client?', False),
+            })
+        
+        return jobs
+        
+    except Exception as e:
+        print(f"[airtable] Error getting all active jobs: {e}")
+        return []
+
+
+def get_job_by_number(job_number):
+    """
+    Get a specific job by its job number (e.g., 'LAB 055').
+    Returns job dict or None if not found.
+    """
+    if not AIRTABLE_API_KEY or not job_number:
+        return None
+    
+    try:
+        # Normalize job number format (LAB_055 -> LAB 055)
+        job_number = job_number.replace('_', ' ').upper()
+        
+        filter_formula = f"{{Job Number}}='{job_number}'"
+        params = {
+            'filterByFormula': filter_formula,
+            'maxRecords': 1
+        }
+        
+        print(f"[airtable] Fetching job: {job_number}")
+        
+        response = httpx.get(
+            _url(PROJECTS_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        
+        if not records:
+            print(f"[airtable] Job {job_number} not found")
+            return None
+        
+        fields = records[0].get('fields', {})
+        
+        return {
+            'jobNumber': fields.get('Job Number', ''),
+            'jobName': fields.get('Project Name', ''),
+            'description': fields.get('Description', ''),
+            'stage': fields.get('Stage', ''),
+            'status': fields.get('Status', ''),
+            'updateDue': fields.get('Update due friendly', ''),
+            'withClient': fields.get('With Client?', False),
+            'clientCode': job_number.split()[0] if job_number else '',
+        }
+        
+    except Exception as e:
+        print(f"[airtable] Error getting job by number: {e}")
+        return None
+
+
 def update_project_record(job_number, updates):
     """
     Update a project's fields by job number.
