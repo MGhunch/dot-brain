@@ -32,16 +32,71 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'Dot Traffic',
-        'version': '2.1',
+        'version': '2.2',
         'architecture': 'claude-first',
         'features': [
             'deduplication',
             'clarify-loop',
             'universal-payload',
             'route-registry',
-            'smart-client-detection'
+            'smart-client-detection',
+            'card-update'
         ]
     })
+
+
+# ===================
+# CARD UPDATE (Hub Modal)
+# ===================
+
+@app.route('/card-update', methods=['POST'])
+def card_update():
+    """
+    Direct field update from Hub modal.
+    No Claude, no workers - just write to Airtable.
+    """
+    try:
+        data = request.get_json()
+        
+        job_number = data.get('jobNumber')
+        if not job_number:
+            return jsonify({'error': 'Missing jobNumber'}), 400
+        
+        # Map frontend field names to Airtable field names
+        field_mapping = {
+            'stage': 'Stage',
+            'status': 'Status',
+            'updateDue': 'Update Due',
+            'liveDate': 'Live Date',
+            'withClient': 'With Client?',
+            'description': 'Description',
+            'projectOwner': 'Project Owner',
+            'projectName': 'Project Name'
+        }
+        
+        # Build Airtable fields from request
+        airtable_fields = {}
+        for key, airtable_key in field_mapping.items():
+            if key in data and data[key] is not None:
+                value = data[key]
+                if key == 'withClient':
+                    value = bool(value)
+                airtable_fields[airtable_key] = value
+        
+        if not airtable_fields:
+            return jsonify({'error': 'No valid fields to update'}), 400
+        
+        # Write to Airtable
+        result = airtable.update_project_record(job_number, airtable_fields)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+            
+    except Exception as e:
+        print(f"[app] Error in /card-update: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 # ===================
