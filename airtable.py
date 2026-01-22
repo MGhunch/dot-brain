@@ -1,6 +1,8 @@
 """
 Dot Traffic 2.0 - Airtable Operations
-All reads and writes to Airtable: Projects, Clients, Traffic table
+
+Job data now comes from Hub API (single source of truth).
+Direct Airtable access only for: Traffic logging, Updates, People, Teams routing.
 """
 
 import os
@@ -14,40 +16,15 @@ from datetime import datetime
 AIRTABLE_API_KEY = os.environ.get('AIRTABLE_API_KEY')
 AIRTABLE_BASE_ID = os.environ.get('AIRTABLE_BASE_ID', 'app8CI7NAZqhQ4G1Y')
 
+# Hub API for job data (single source of truth)
+HUB_API_BASE = os.environ.get('HUB_API_BASE', 'https://dot.hunch.co.nz')
+
 PROJECTS_TABLE = 'Projects'
 CLIENTS_TABLE = 'Clients'
 TRAFFIC_TABLE = 'Traffic'
 UPDATES_TABLE = 'Updates'
 
 TIMEOUT = 10.0
-
-
-def _parse_date_to_iso(date_str):
-    """
-    Parse Airtable date field (D/M/YYYY format) into ISO format (YYYY-MM-DD).
-    Handles formats like "2/3/2026" or "15/12/2025".
-    """
-    if not date_str or str(date_str).upper() == 'TBC':
-        return None
-    
-    import re
-    # Handle D/M/YYYY format
-    match = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', str(date_str))
-    if match:
-        day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
-        try:
-            return datetime(year, month, day).strftime('%Y-%m-%d')
-        except ValueError:
-            return None
-    
-    # Also handle ISO format if Airtable sends it that way
-    if 'T' in str(date_str):
-        try:
-            return str(date_str).split('T')[0]
-        except:
-            pass
-    
-    return None
 
 
 def _headers():
@@ -61,6 +38,111 @@ def _headers():
 def _url(table):
     """Build Airtable URL for a table"""
     return f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{table}'
+
+
+# ===================
+# JOB DATA (via Hub API)
+# ===================
+
+def get_active_jobs(client_code):
+    """
+    Get all active jobs for a client via Hub API.
+    Returns list of job dicts with full details for job cards.
+    """
+    if not client_code:
+        return []
+    
+    try:
+        url = f"{HUB_API_BASE}/api/jobs/all?status=active&client={client_code}"
+        print(f"[airtable] Fetching active jobs for {client_code} from Hub")
+        
+        response = httpx.get(url, timeout=TIMEOUT)
+        response.raise_for_status()
+        
+        jobs = response.json()
+        print(f"[airtable] Found {len(jobs)} active jobs for {client_code}")
+        return jobs
+        
+    except Exception as e:
+        print(f"[airtable] Error getting active jobs from Hub: {e}")
+        return []
+
+
+def get_all_active_jobs():
+    """
+    Get ALL active jobs across ALL clients via Hub API.
+    Returns list of job dicts - typically ~20 jobs total.
+    """
+    try:
+        url = f"{HUB_API_BASE}/api/jobs/all?status=active"
+        print(f"[airtable] Fetching all active jobs from Hub")
+        
+        response = httpx.get(url, timeout=TIMEOUT)
+        response.raise_for_status()
+        
+        jobs = response.json()
+        print(f"[airtable] Found {len(jobs)} total active jobs")
+        return jobs
+        
+    except Exception as e:
+        print(f"[airtable] Error getting all active jobs from Hub: {e}")
+        return []
+
+
+def get_completed_jobs(client_code=None):
+    """
+    Get completed jobs via Hub API.
+    Optionally filter by client code.
+    """
+    try:
+        url = f"{HUB_API_BASE}/api/jobs/all?status=completed"
+        if client_code:
+            url += f"&client={client_code}"
+        
+        print(f"[airtable] Fetching completed jobs from Hub")
+        
+        response = httpx.get(url, timeout=TIMEOUT)
+        response.raise_for_status()
+        
+        jobs = response.json()
+        print(f"[airtable] Found {len(jobs)} completed jobs")
+        return jobs
+        
+    except Exception as e:
+        print(f"[airtable] Error getting completed jobs from Hub: {e}")
+        return []
+
+
+def get_job_by_number(job_number):
+    """
+    Get a specific job by its job number via Hub API.
+    Returns job dict or None if not found.
+    """
+    if not job_number:
+        return None
+    
+    try:
+        # Normalize job number format (LAB_055 -> LAB 055)
+        job_number = job_number.replace('_', ' ').upper()
+        
+        # URL encode the space
+        encoded = job_number.replace(' ', '%20')
+        url = f"{HUB_API_BASE}/api/job/{encoded}"
+        
+        print(f"[airtable] Fetching job {job_number} from Hub")
+        
+        response = httpx.get(url, timeout=TIMEOUT)
+        
+        if response.status_code == 404:
+            print(f"[airtable] Job {job_number} not found")
+            return None
+            
+        response.raise_for_status()
+        return response.json()
+        
+    except Exception as e:
+        print(f"[airtable] Error getting job from Hub: {e}")
+        return None
 
 
 # ===================
@@ -189,13 +271,13 @@ def update_traffic_record(record_id, updates):
 
 
 # ===================
-# PROJECTS TABLE
+# PROJECTS TABLE (Write operations only)
 # ===================
 
 def get_project(job_number):
     """
-    Look up project by job number.
-    Returns dict with project info or None.
+    Look up project by job number for routing info (Teams channel, etc).
+    This is kept as direct Airtable for routing-specific fields.
     """
     if not AIRTABLE_API_KEY or not job_number:
         return None
@@ -250,267 +332,14 @@ def get_project(job_number):
         return None
 
 
-def get_active_jobs(client_code):
-    """
-    Get all active (not completed) jobs for a client.
-    Returns list of job dicts with full details for job cards.
-    """
-    if not AIRTABLE_API_KEY or not client_code:
-        return []
-    
-    try:
-        # Get all jobs that are NOT completed
-        filter_formula = f"AND(FIND('{client_code}', {{Job Number}})=1, {{Status}}!='Completed')"
-        params = {'filterByFormula': filter_formula}
-        
-        print(f"[airtable] Fetching active jobs for {client_code}")
-        
-        response = httpx.get(
-            _url(PROJECTS_TABLE), 
-            headers=_headers(), 
-            params=params, 
-            timeout=TIMEOUT
-        )
-        response.raise_for_status()
-        
-        records = response.json().get('records', [])
-        
-        print(f"[airtable] Found {len(records)} active jobs for {client_code}")
-        
-        jobs = []
-        for record in records:
-            fields = record.get('fields', {})
-            job_number = fields.get('Job Number', '')
-            
-            # Get update from the Update field directly
-            latest_update = fields.get('Update', '')
-            
-            # Parse update history (field name is 'Update History')
-            update_history_raw = fields.get('Update History', []) or fields.get('Update history', [])
-            update_history = []
-            last_updated = None
-            
-            if update_history_raw:
-                if isinstance(update_history_raw, list):
-                    update_history = update_history_raw[:5]  # Keep last 5 for history
-                elif isinstance(update_history_raw, str):
-                    update_history = [u.strip() for u in update_history_raw.split('\n') if u.strip()][:5]
-                
-                # Extract date from first history entry if present
-                if update_history:
-                    first_update = update_history[0]
-                    if ' | ' in first_update:
-                        date_part, _ = first_update.split(' | ', 1)
-                        last_updated = date_part
-            
-            # Parse Update Due - now D/M/YYYY format, convert to ISO for JS
-            update_due_raw = fields.get('Update Due', '')
-            update_due = _parse_date_to_iso(update_due_raw)
-            
-            jobs.append({
-                'jobNumber': job_number,
-                'jobName': fields.get('Project Name', ''),
-                'description': fields.get('Description', ''),
-                'stage': fields.get('Stage', ''),
-                'status': fields.get('Status', ''),
-                'updateDue': update_due,
-                'liveDate': fields.get('Live', ''),  # Month dropdown: "Jan", "Feb", "Tbc"
-                'withClient': fields.get('With Client?', False),
-                'clientCode': job_number.split()[0] if job_number else '',
-                'update': latest_update,
-                'lastUpdated': last_updated,
-                'updateHistory': update_history,
-                'channelUrl': fields.get('Channel Url', ''),
-            })
-        
-        return jobs
-        
-    except Exception as e:
-        print(f"[airtable] Error getting active jobs: {e}")
-        return []
-
-
-def get_all_active_jobs():
-    """
-    Get ALL active jobs across ALL clients.
-    Returns list of job dicts - typically ~20 jobs total.
-    Use this for cross-client queries like "What's due today?"
-    """
-    if not AIRTABLE_API_KEY:
-        return []
-    
-    try:
-        # Get all jobs that are NOT completed
-        filter_formula = "{Status}!='Completed'"
-        params = {'filterByFormula': filter_formula}
-        
-        print(f"[airtable] Fetching all active jobs across all clients")
-        
-        response = httpx.get(
-            _url(PROJECTS_TABLE), 
-            headers=_headers(), 
-            params=params, 
-            timeout=TIMEOUT
-        )
-        response.raise_for_status()
-        
-        records = response.json().get('records', [])
-        
-        print(f"[airtable] Found {len(records)} total active jobs")
-        
-        jobs = []
-        for record in records:
-            fields = record.get('fields', {})
-            job_number = fields.get('Job Number', '')
-            
-            # Get update from the Update field directly
-            latest_update = fields.get('Update', '')
-            
-            # Parse update history (field name is 'Update History')
-            update_history_raw = fields.get('Update History', []) or fields.get('Update history', [])
-            update_history = []
-            last_updated = None
-            
-            if update_history_raw:
-                if isinstance(update_history_raw, list):
-                    update_history = update_history_raw[:5]  # Keep last 5 for history
-                elif isinstance(update_history_raw, str):
-                    update_history = [u.strip() for u in update_history_raw.split('\n') if u.strip()][:5]
-                
-                # Extract date from first history entry if present
-                if update_history:
-                    first_update = update_history[0]
-                    if ' | ' in first_update:
-                        date_part, _ = first_update.split(' | ', 1)
-                        last_updated = date_part
-            
-            # Parse Update Due - now D/M/YYYY format, convert to ISO for JS
-            update_due_raw = fields.get('Update Due', '')
-            update_due = _parse_date_to_iso(update_due_raw)
-            
-            jobs.append({
-                'jobNumber': job_number,
-                'jobName': fields.get('Project Name', ''),
-                'description': fields.get('Description', ''),
-                'stage': fields.get('Stage', ''),
-                'status': fields.get('Status', ''),
-                'updateDue': update_due,
-                'liveDate': fields.get('Live', ''),  # Month dropdown: "Jan", "Feb", "Tbc"
-                'withClient': fields.get('With Client?', False),
-                'clientCode': job_number.split()[0] if job_number else '',
-                'update': latest_update,
-                'lastUpdated': last_updated,
-                'updateHistory': update_history,
-                'channelUrl': fields.get('Channel Url', ''),
-            })
-        
-        return jobs
-        
-    except Exception as e:
-        print(f"[airtable] Error getting all active jobs: {e}")
-        return []
-
-
-def get_job_by_number(job_number):
-    """
-    Get a specific job by its job number (e.g., 'LAB 055').
-    Returns job dict or None if not found.
-    """
-    if not AIRTABLE_API_KEY or not job_number:
-        return None
-    
-    try:
-        # Normalize job number format (LAB_055 -> LAB 055)
-        job_number = job_number.replace('_', ' ').upper()
-        
-        filter_formula = f"{{Job Number}}='{job_number}'"
-        params = {
-            'filterByFormula': filter_formula,
-            'maxRecords': 1
-        }
-        
-        print(f"[airtable] Fetching job: {job_number}")
-        
-        response = httpx.get(
-            _url(PROJECTS_TABLE), 
-            headers=_headers(), 
-            params=params, 
-            timeout=TIMEOUT
-        )
-        response.raise_for_status()
-        
-        records = response.json().get('records', [])
-        
-        if not records:
-            print(f"[airtable] Job {job_number} not found")
-            return None
-        
-        fields = records[0].get('fields', {})
-        
-        # Get update from the Update field directly
-        latest_update = fields.get('Update', '')
-        
-        # Parse update history (field name is 'Update History')
-        update_history_raw = fields.get('Update History', []) or fields.get('Update history', [])
-        update_history = []
-        last_updated = None
-        
-        if update_history_raw:
-            if isinstance(update_history_raw, list):
-                update_history = update_history_raw[:5]  # Keep last 5 for history
-            elif isinstance(update_history_raw, str):
-                update_history = [u.strip() for u in update_history_raw.split('\n') if u.strip()][:5]
-            
-            # Extract date from first history entry if present
-            if update_history:
-                first_update = update_history[0]
-                if ' | ' in first_update:
-                    date_part, _ = first_update.split(' | ', 1)
-                    last_updated = date_part
-        
-        # Parse Update Due - now D/M/YYYY format, convert to ISO for JS
-        update_due_raw = fields.get('Update Due', '')
-        update_due = _parse_date_to_iso(update_due_raw)
-        
-        return {
-            'jobNumber': fields.get('Job Number', ''),
-            'jobName': fields.get('Project Name', ''),
-            'description': fields.get('Description', ''),
-            'stage': fields.get('Stage', ''),
-            'status': fields.get('Status', ''),
-            'updateDue': update_due,
-            'liveDate': fields.get('Live', ''),  # Month dropdown: "Jan", "Feb", "Tbc"
-            'withClient': fields.get('With Client?', False),
-            'clientCode': job_number.split()[0] if job_number else '',
-            'update': latest_update,
-            'lastUpdated': last_updated,
-            'updateHistory': update_history,
-            'channelUrl': fields.get('Channel Url', ''),
-        }
-        
-    except Exception as e:
-        print(f"[airtable] Error getting job by number: {e}")
-        return None
-
-
 def update_project_record(job_number, updates):
     """
     Update a project's fields by job number.
-    Used by Hub card-update (modal) for direct field updates.
+    Used for direct field updates.
     
     Args:
         job_number: e.g., 'LAB 055'
-        updates: dict of Airtable field names to values, e.g.:
-            {
-                'Stage': 'Craft',
-                'Status': 'In Progress',
-                'With Client?': True,
-                'Update Due': '2026-01-25',
-                'Live': 'Feb',
-                'Description': 'Updated description',
-                'Project Owner': 'Sarah',
-                'Project Name': 'New name'
-            }
+        updates: dict of Airtable field names to values
     
     Returns:
         dict with 'success': True/False and 'updated': list of field names
