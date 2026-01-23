@@ -184,6 +184,15 @@ def handle_traffic():
             return jsonify(routing), 500
         
         # ===================
+        # STEP 5b: ENRICH WITH PROJECT DATA (if we have a job number)
+        # ===================
+        if routing.get('jobNumber'):
+            project = airtable.get_project(routing.get('jobNumber'))
+            if project:
+                routing = enrich_with_project(routing, project)
+                print(f"[app] Enriched with project data: teamId={routing.get('teamId')}, channelId={routing.get('teamsChannelId')}")
+        
+        # ===================
         # STEP 6: LOG TO TRAFFIC TABLE
         # ===================
         # Determine response type - with backwards compatibility

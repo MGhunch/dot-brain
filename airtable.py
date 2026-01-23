@@ -475,6 +475,10 @@ def get_job_by_number(job_number):
         update_due_raw = fields.get('Update Due', '')
         update_due = _parse_date_to_iso(update_due_raw)
         
+        # Get client code and team ID
+        client_code = job_number.split()[0] if job_number else ''
+        team_id = get_team_id(client_code) if client_code else None
+        
         return {
             'jobNumber': fields.get('Job Number', ''),
             'jobName': fields.get('Project Name', ''),
@@ -484,12 +488,15 @@ def get_job_by_number(job_number):
             'updateDue': update_due,
             'liveDate': fields.get('Live', ''),  # Month dropdown: "Jan", "Feb", "Tbc"
             'withClient': fields.get('With Client?', False),
-            'clientCode': job_number.split()[0] if job_number else '',
+            'clientCode': client_code,
             'update': latest_update,
             'lastUpdated': last_updated,
             'updateHistory': update_history,
             'channelUrl': fields.get('Channel Url', ''),
             'daysSinceUpdate': fields.get('Days Since Update', '-'),
+            'teamsChannelId': fields.get('Teams Channel ID', ''),
+            'teamId': team_id,
+            'filesUrl': fields.get('Files URL', ''),
         }
         
     except Exception as e:
