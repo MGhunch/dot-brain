@@ -4,6 +4,7 @@ Route registry, email templates, downstream calls to workers and PA Postman
 
 Updated: Added salutations, fixed logo ratio, new copy, send_answer(), send_redirect(), send_not_built()
 Updated: Enabled update/feedback/work-to-client routes pointing to dot-update worker
+Updated: Added post_to_teams() for Teams channel posting via PA Teamsbot
 """
 
 import os
@@ -14,6 +15,7 @@ import httpx
 # ===================
 
 PA_POSTMAN_URL = os.environ.get('PA_POSTMAN_URL', '')
+PA_TEAMSBOT_URL = os.environ.get('PA_TEAMSBOT_URL', '')
 
 TIMEOUT = 30.0
 
@@ -304,6 +306,71 @@ def build_email(clarify_type, routing_data):
 
 
 # ===================
+# TEAMS POSTING CONFIG
+# ===================
+
+# Routes that should trigger a Teams post after success
+TEAMS_POST_ROUTES = ['update', 'feedback', 'work-to-client', 'file']
+
+# Message templates for Teams posts
+TEAMS_TEMPLATES = {
+    'update': "**Update from {sender_name}**\n\n{email_content}",
+    'feedback': "**Feedback from client**\n\n{email_content}",
+    'work-to-client': "**Sent to client**\n\n{email_content}",
+    'file': "**Files uploaded**\n\n{file_list}\n\n[View files]({files_url})",
+}
+
+def build_teams_message(route, payload, files_url=None):
+    """
+    Build the Teams message based on route and payload.
+    
+    Args:
+        route: The route name
+        payload: The universal payload
+        files_url: Optional files URL (from worker response)
+    
+    Returns:
+        Formatted message string for Teams
+    """
+    template = TEAMS_TEMPLATES.get(route)
+    if not template:
+        return None
+    
+    # Get sender name, clean it up
+    sender_name = payload.get('senderName', 'Someone')
+    if not sender_name:
+        sender_name = payload.get('senderEmail', 'Someone').split('@')[0]
+    
+    # Get email content, truncate if very long
+    email_content = payload.get('emailContent', '')
+    if len(email_content) > 1000:
+        email_content = email_content[:1000] + '...'
+    
+    # Get file list for file route
+    file_list = ''
+    attachment_names = payload.get('attachmentNames', [])
+    if attachment_names:
+        file_list = '\n'.join([f"• {name}" for name in attachment_names])
+    
+    # Use provided files_url or fall back to payload
+    if not files_url:
+        files_url = payload.get('filesUrl', '')
+    
+    # Format the template
+    try:
+        message = template.format(
+            sender_name=sender_name,
+            email_content=email_content,
+            file_list=file_list or 'Files attached',
+            files_url=files_url or 'Link not available'
+        )
+        return message
+    except KeyError:
+        # If template has placeholders we don't have, return simple version
+        return f"**{route.title()}** - {payload.get('jobNumber', 'Unknown job')}"
+
+
+# ===================
 # DOWNSTREAM CALLS
 # ===================
 
@@ -370,13 +437,48 @@ def call_worker(route, payload):
             headers={'Content-Type': 'application/json'}
         )
         
-        return {
+        worker_result = {
             'success': response.status_code == 200,
             'status': status,
             'endpoint': endpoint,
             'response_code': response.status_code,
             'response': response.json() if response.status_code == 200 else response.text
         }
+        
+        # ===================
+        # POST TO TEAMS (if successful and route qualifies)
+        # ===================
+        if worker_result['success'] and route in TEAMS_POST_ROUTES:
+            team_id = payload.get('teamId')
+            channel_id = payload.get('teamsChannelId')
+            
+            if team_id and channel_id:
+                # Get files URL from worker response if available (file route returns folderUrl)
+                files_url = None
+                if isinstance(worker_result.get('response'), dict):
+                    files_url = worker_result['response'].get('folderUrl')
+                
+                # Also check payload for pre-existing files URL
+                if not files_url:
+                    files_url = payload.get('filesUrl')
+                
+                # Build and send Teams message
+                teams_message = build_teams_message(route, payload, files_url)
+                if teams_message:
+                    teams_result = post_to_teams(
+                        team_id=team_id,
+                        channel_id=channel_id,
+                        message=teams_message,
+                        job_number=payload.get('jobNumber'),
+                        client_code=payload.get('clientCode'),
+                        subject=f"{route.title()}: {payload.get('jobNumber', 'Update')}"
+                    )
+                    worker_result['teamsPost'] = teams_result
+                    print(f"[connect] Teams post: {teams_result.get('success', False)}")
+            else:
+                print(f"[connect] Teams post skipped - missing team/channel IDs")
+        
+        return worker_result
         
     except Exception as e:
         print(f"[connect] Error calling {endpoint}: {e}")
@@ -437,6 +539,82 @@ def call_postman(route, payload):
             'endpoint': 'PA_POSTMAN',
             'error': str(e),
             'would_send': postman_payload
+        }
+
+
+# ===================
+# TEAMS POSTING
+# ===================
+
+def post_to_teams(team_id, channel_id, message, job_number=None, client_code=None, subject=None):
+    """
+    Post a message to a Teams channel via PA Teamsbot.
+    
+    Args:
+        team_id: The Teams team ID (from Clients table)
+        channel_id: The Teams channel ID (from Projects table)
+        message: The message to post
+        job_number: Optional job number for logging and default subject
+        client_code: Optional client code for logging
+        subject: Optional subject line (defaults to job number if not provided)
+    
+    Returns:
+        dict with result info
+    """
+    if not team_id or not channel_id:
+        print(f"[connect] Teams post skipped - missing IDs (team: {team_id}, channel: {channel_id})")
+        return {
+            'success': False,
+            'error': 'Missing teamId or channelId',
+            'skipped': True
+        }
+    
+    # Default subject to job number if not provided
+    if not subject and job_number:
+        subject = f"Update: {job_number}"
+    
+    teams_payload = {
+        'teamId': team_id,
+        'channelId': channel_id,
+        'subject': subject or '',
+        'message': message,
+        'jobNumber': job_number or '',
+        'clientCode': client_code or ''
+    }
+    
+    print(f"[connect] Posting to Teams: {job_number or client_code or 'unknown'}")
+    
+    if not PA_TEAMSBOT_URL:
+        return {
+            'success': False,
+            'status': 'testing',
+            'error': 'PA_TEAMSBOT_URL not configured',
+            'would_send': teams_payload
+        }
+    
+    try:
+        response = httpx.post(
+            PA_TEAMSBOT_URL,
+            json=teams_payload,
+            timeout=TIMEOUT,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        return {
+            'success': response.status_code == 200 or response.status_code == 202,
+            'status': 'live',
+            'endpoint': 'PA_TEAMSBOT',
+            'response_code': response.status_code
+        }
+        
+    except Exception as e:
+        print(f"[connect] Error posting to Teams: {e}")
+        return {
+            'success': False,
+            'status': 'error',
+            'endpoint': 'PA_TEAMSBOT',
+            'error': str(e),
+            'would_send': teams_payload
         }
 
 
