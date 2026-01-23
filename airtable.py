@@ -124,15 +124,25 @@ def check_pending_clarify(conversation_id):
         return None
 
 
-def log_traffic(internet_message_id, conversation_id, route, status, job_number, client_code, sender_email, subject):
+def log_traffic(internet_message_id, conversation_id, route, status, job_number, client_code, sender_email, subject, email_body=None):
     """
     Log email to Traffic table.
     Returns the created record ID or None.
+    
+    email_body is truncated to 99,000 chars if too long (Airtable limit is 100,000).
     """
     if not AIRTABLE_API_KEY:
         return None
     
     try:
+        # Truncate email body if too long for Airtable
+        truncated_body = None
+        if email_body:
+            if len(email_body) > 99000:
+                truncated_body = email_body[:99000] + "\n\n[TRUNCATED - email too long]"
+            else:
+                truncated_body = email_body
+        
         record_data = {
             'fields': {
                 'internetMessageId': internet_message_id or '',
@@ -143,7 +153,7 @@ def log_traffic(internet_message_id, conversation_id, route, status, job_number,
                 'clientCode': client_code or '',
                 'SenderEmail': sender_email or '',
                 'Subject': subject or '',
-                'CreatedAt': datetime.utcnow().isoformat()
+                'EmailBody': truncated_body or ''
             }
         }
         
@@ -162,6 +172,42 @@ def log_traffic(internet_message_id, conversation_id, route, status, job_number,
         
     except Exception as e:
         print(f"[airtable] Error logging to Traffic: {e}")
+        return None
+
+
+def get_email_body(internet_message_id):
+    """
+    Retrieve email body from Traffic table by internetMessageId.
+    Used by workers and connect.py to get full email content without passing it in payload.
+    
+    Returns the email body string or None if not found.
+    """
+    if not AIRTABLE_API_KEY or not internet_message_id:
+        return None
+    
+    try:
+        params = {
+            'filterByFormula': f"{{internetMessageId}}='{internet_message_id}'",
+            'maxRecords': 1
+        }
+        
+        response = httpx.get(
+            _url(TRAFFIC_TABLE), 
+            headers=_headers(), 
+            params=params, 
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        records = response.json().get('records', [])
+        if not records:
+            print(f"[airtable] No traffic record found for {internet_message_id}")
+            return None
+        
+        return records[0]['fields'].get('EmailBody', None)
+        
+    except Exception as e:
+        print(f"[airtable] Error getting email body: {e}")
         return None
 
 

@@ -262,7 +262,7 @@ def handle_traffic():
         airtable.log_traffic(
             internet_message_id, conversation_id, log_route, status,
             routing.get('jobNumber'), routing.get('clientCode'),
-            sender_email, subject
+            sender_email, subject, content  # Added email_body
         )
         
         # ===================
