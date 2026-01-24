@@ -1,13 +1,13 @@
 """
-Dot Traffic 2.0
+Dot Traffic 2.0 (Brain)
 Intelligent routing layer for Hunch's agency workflow.
 Receives emails from PA Listener or Hub, routes to workers.
 
 ARCHITECTURE:
-- DOT THINKS (traffic.py) - Claude decides what to do
-- WORKERS WORK (dot-update, dot-file) - Do the actual work + communicate results
+- BRAIN THINKS (traffic.py) - Claude decides what to do
+- WORKERS WORK (dot-workers) - Do the actual work + communicate results
 - AIRTABLE REMEMBERS (airtable.py) - Data persistence
-- CONNECT COMMUNICATES (connect.py) - Email and Teams (called by workers OR traffic for answers)
+- CONNECT COMMUNICATES (connect.py) - Email (for answers/redirects/clarify)
 
 FLOW:
 1. Gates (ignore self, check sender domain, deduplication)
@@ -16,7 +16,7 @@ FLOW:
 4. Log to Traffic table
 5. Route based on type:
    - answer/redirect/clarify → connect.py sends email directly
-   - action → call worker, worker handles Teams + confirmation email
+   - action → call worker, worker handles everything (file, Teams, confirmation)
 """
 
 from flask import Flask, request, jsonify
@@ -34,20 +34,19 @@ CORS(app)
 # ===================
 
 WORKER_URLS = {
-    'update': 'https://dot-update.up.railway.app/update',
-    'file': 'https://dot-file.up.railway.app/file',
-    # Add more workers as they're built:
-    # 'triage': 'https://dot-triage.up.railway.app/triage',
-    # 'feedback': 'https://dot-update.up.railway.app/update',  # Same as update
+    'update': 'https://dot-workers.up.railway.app/update',
+    # Future workers:
+    # 'newjob': 'https://dot-workers.up.railway.app/newjob',
+    # 'triage': 'https://dot-workers.up.railway.app/triage',
 }
 
-WORKER_TIMEOUT = 30.0
+WORKER_TIMEOUT = 60.0  # Workers do more now, give them time
 
 
 def call_worker(route, payload):
     """
-    Call a worker service directly.
-    Workers are responsible for their own communication (Teams, confirmation emails).
+    Call a worker service.
+    Workers handle everything: file attachments, Airtable updates, Teams, confirmation emails.
     
     Returns dict with success status and worker response.
     """
@@ -112,15 +111,10 @@ def health():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
-        'service': 'Dot Traffic',
-        'version': '3.0',  # Major version bump for new architecture
-        'architecture': 'workers-communicate',
-        'features': [
-            'deduplication',
-            'clarify-loop',
-            'direct-worker-calls',
-            'workers-own-communication'
-        ]
+        'service': 'Dot Brain',
+        'version': '3.1',
+        'architecture': 'brain-thinks-workers-work',
+        'workers': list(WORKER_URLS.keys())
     })
 
 
@@ -262,7 +256,7 @@ def handle_traffic():
         airtable.log_traffic(
             internet_message_id, conversation_id, log_route, status,
             routing.get('jobNumber'), routing.get('clientCode'),
-            sender_email, subject, content  # Added email_body
+            sender_email, subject, content  # Pass email body for storage
         )
         
         # ===================
@@ -285,7 +279,7 @@ def handle_traffic():
         }
         
         if response_type == 'answer':
-            # ANSWER: Traffic sends email directly via connect.py
+            # ANSWER: Brain sends email directly via connect.py
             if source == 'email':
                 worker_result = connect.send_answer(
                     to_email=sender_email,
@@ -298,7 +292,7 @@ def handle_traffic():
                 worker_result = {'success': True, 'status': 'answered'}
                 
         elif response_type == 'redirect':
-            # REDIRECT: Traffic sends email directly via connect.py
+            # REDIRECT: Brain sends email directly via connect.py
             if source == 'email':
                 worker_result = connect.send_redirect(
                     to_email=sender_email,
@@ -314,7 +308,7 @@ def handle_traffic():
                 worker_result = {'success': True, 'status': 'redirected'}
                 
         elif response_type in ['clarify', 'confirm']:
-            # CLARIFY/CONFIRM: Traffic sends email directly via connect.py
+            # CLARIFY/CONFIRM: Brain sends email directly via connect.py
             if source == 'email':
                 clarify_type = routing.get('clarifyType', 'no_idea')
                 if response_type == 'confirm':
@@ -333,23 +327,12 @@ def handle_traffic():
                 worker_result = {'success': True, 'status': 'pending_user_input'}
                 
         elif response_type == 'action':
-            # ACTION: Call worker, worker handles Teams + confirmation email
+            # ACTION: Call worker - worker handles EVERYTHING
+            # (file attachments, Airtable updates, Teams post, confirmation email)
             if source == 'email':
-                # File attachments first if needed
-                file_result = None
-                if has_attachments and routing.get('jobNumber'):
-                    print(f"[app] Filing attachments for {routing.get('jobNumber')}")
-                    file_result = call_worker('file', payload)
-                    print(f"[app] File result: success={file_result.get('success')}")
-                
-                # Call the main worker
                 worker_result = call_worker(route, payload)
-                
-                # Include file result
-                if file_result:
-                    worker_result['fileResult'] = file_result
                     
-                # If worker failed, send failure email from app.py
+                # If worker failed, send failure email from Brain
                 # (because worker might not have been able to send it)
                 if not worker_result.get('success'):
                     connect.send_failure(
@@ -505,17 +488,8 @@ def handle_clarify_reply(data, pending_clarify):
             
             payload = build_worker_payload(data, routing)
             
-            # File attachments first if needed
-            file_result = None
-            if has_attachments and reply_job_number:
-                print(f"[app] Filing attachments (clarify reply) for {reply_job_number}")
-                file_result = call_worker('file', payload)
-            
-            # Call update worker
+            # Call worker - worker handles file + update + comms
             worker_result = call_worker('update', payload)
-            
-            if file_result:
-                worker_result['fileResult'] = file_result
             
             # If worker failed, send failure email
             if not worker_result.get('success'):
@@ -580,17 +554,8 @@ def handle_clarify_reply(data, pending_clarify):
                 
                 payload = build_worker_payload(data, routing)
                 
-                # File attachments first if needed
-                file_result = None
-                if has_attachments and suggested_job:
-                    print(f"[app] Filing attachments (clarify confirm) for {suggested_job}")
-                    file_result = call_worker('file', payload)
-                
-                # Call update worker
+                # Call worker - worker handles file + update + comms
                 worker_result = call_worker('update', payload)
-                
-                if file_result:
-                    worker_result['fileResult'] = file_result
                 
                 # If worker failed, send failure email
                 if not worker_result.get('success'):
@@ -666,7 +631,7 @@ def build_worker_payload(email_data, routing):
             'content': email_data.get('body') or email_data.get('content') or email_data.get('emailContent', '')
         },
         
-        # Attachments
+        # Attachments (worker handles filing)
         'hasAttachments': email_data.get('hasAttachments', False),
         'attachmentNames': email_data.get('attachmentNames', []),
         'attachmentList': email_data.get('attachmentList', []),
