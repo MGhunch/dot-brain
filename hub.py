@@ -1,13 +1,13 @@
 """
-Dot Hub Brain - Simple Claude
-Fast path for Hub requests. No tools, jobs in context.
+Dot Hub Brain - Simple Claude + Horoscope Tool
+Fast path for Hub requests. Jobs in context, one tool for horoscopes.
 
 SIMPLE CLAUDE:
 - Has all jobs in context (summary format for speed)
-- No tools to call
+- One tool: get_horoscope (for fun)
 - Answers job questions directly
 - Redirects spend/people gracefully
-- Fast (~2-3 seconds)
+- Fast (~2-3 seconds for most requests)
 - Maintains conversation history for context
 
 IMPORTANT: Claude returns job NUMBERS, not full objects.
@@ -26,6 +26,9 @@ from anthropic import Anthropic
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 ANTHROPIC_MODEL = 'claude-sonnet-4-20250514'
 
+# Horoscope service URL (internal call within Brain)
+HOROSCOPE_SERVICE_URL = os.environ.get('HOROSCOPE_SERVICE_URL', 'https://dot-workers.up.railway.app')
+
 # Load prompt
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompt_hub.txt')
 with open(PROMPT_PATH, 'r') as f:
@@ -36,6 +39,67 @@ anthropic_client = Anthropic(
     api_key=ANTHROPIC_API_KEY,
     http_client=httpx.Client(timeout=30.0, follow_redirects=True)
 )
+
+# HTTP client for internal calls
+http_client = httpx.Client(timeout=10.0)
+
+
+# ===================
+# TOOLS
+# ===================
+
+HOROSCOPE_TOOL = {
+    "name": "get_horoscope",
+    "description": "Get a horoscope for a star sign. Use when someone asks for their horoscope.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sign": {
+                "type": "string",
+                "description": "The star sign (e.g., 'leo', 'aries', 'pisces')",
+                "enum": ["aries", "taurus", "gemini", "cancer", "leo", "virgo", 
+                        "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"]
+            }
+        },
+        "required": ["sign"]
+    }
+}
+
+
+def call_horoscope_service(sign: str) -> dict:
+    """
+    Call the horoscope service to get a reading.
+    """
+    try:
+        response = http_client.post(
+            f"{HOROSCOPE_SERVICE_URL}/horoscope",
+            json={"sign": sign.lower()}
+        )
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"Service returned {response.status_code}"}
+    except Exception as e:
+        print(f"[hub] Horoscope service error: {e}")
+        return {"error": str(e)}
+
+
+def handle_tool_call(tool_name: str, tool_input: dict) -> str:
+    """
+    Handle a tool call from Claude.
+    """
+    if tool_name == "get_horoscope":
+        sign = tool_input.get("sign", "").lower()
+        result = call_horoscope_service(sign)
+        if "error" in result:
+            return json.dumps({"error": result["error"]})
+        return json.dumps({
+            "sign": result.get("sign", sign.capitalize()),
+            "horoscope": result.get("horoscope", "The stars are silent today."),
+            "disclaimer": result.get("disclaimer", "")
+        })
+    
+    return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
 # ===================
@@ -109,8 +173,8 @@ def _format_jobs_for_context(jobs):
 
 def handle_hub_request(data):
     """
-    Handle a Hub chat request with Simple Claude.
-    No tools - just jobs in context (summary format).
+    Handle a Hub chat request with Simple Claude + Horoscope tool.
+    Jobs in context (summary format), one tool for horoscopes.
     Maintains conversation history for multi-turn context.
     
     Args:
@@ -124,7 +188,7 @@ def handle_hub_request(data):
     sender_name = data.get('senderName', 'there')
     history = data.get('history', [])  # Conversation history from frontend
     
-    print(f"[hub] === SIMPLE CLAUDE ===")
+    print(f"[hub] === SIMPLE CLAUDE + TOOLS ===")
     print(f"[hub] Question: {content}")
     print(f"[hub] Jobs in context: {len(jobs)}")
     print(f"[hub] History messages: {len(history)}")
@@ -154,17 +218,67 @@ Question: {content}
     messages.append({'role': 'user', 'content': current_message})
     
     try:
+        # First API call - may return tool use or direct response
         response = anthropic_client.messages.create(
             model=ANTHROPIC_MODEL,
             max_tokens=1500,
             temperature=0.1,
             system=HUB_PROMPT,
-            messages=messages
+            messages=messages,
+            tools=[HOROSCOPE_TOOL]
         )
         
-        result_text = response.content[0].text
-        result_text = _strip_markdown_json(result_text)
+        # Check if Claude wants to use a tool
+        if response.stop_reason == "tool_use":
+            # Find the tool use block
+            tool_use_block = None
+            for block in response.content:
+                if block.type == "tool_use":
+                    tool_use_block = block
+                    break
+            
+            if tool_use_block:
+                print(f"[hub] Tool call: {tool_use_block.name}")
+                print(f"[hub] Tool input: {tool_use_block.input}")
+                
+                # Execute the tool
+                tool_result = handle_tool_call(
+                    tool_use_block.name, 
+                    tool_use_block.input
+                )
+                
+                # Add assistant's tool request and tool result to messages
+                messages.append({
+                    "role": "assistant",
+                    "content": response.content
+                })
+                messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_block.id,
+                        "content": tool_result
+                    }]
+                })
+                
+                # Second API call to get final response
+                response = anthropic_client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=1500,
+                    temperature=0.1,
+                    system=HUB_PROMPT,
+                    messages=messages,
+                    tools=[HOROSCOPE_TOOL]
+                )
         
+        # Extract text response
+        result_text = ""
+        for block in response.content:
+            if hasattr(block, 'text'):
+                result_text = block.text
+                break
+        
+        result_text = _strip_markdown_json(result_text)
         result = json.loads(result_text)
         
         print(f"[hub] Type: {result.get('type')}")
@@ -176,6 +290,7 @@ Question: {content}
         
     except json.JSONDecodeError as e:
         print(f"[hub] JSON error: {e}")
+        print(f"[hub] Raw response: {result_text[:200] if result_text else 'empty'}")
         return {
             'type': 'answer',
             'message': "Sorry, I got in a muddle over that one.",
