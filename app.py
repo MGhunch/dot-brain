@@ -35,12 +35,14 @@ CORS(app)
 
 WORKER_URLS = {
     'update': 'https://dot-workers.up.railway.app/update',
+    'setup': 'https://dot-workers.up.railway.app/setup',
+    'triage': 'https://dot-workers.up.railway.app/setup',  # triage routes to setup
+    'new-job': 'https://dot-workers.up.railway.app/setup',  # new-job routes to setup
     # Future workers:
-    # 'newjob': 'https://dot-workers.up.railway.app/newjob',
-    # 'triage': 'https://dot-workers.up.railway.app/triage',
+    # 'feedback': 'https://dot-workers.up.railway.app/feedback',
 }
 
-WORKER_TIMEOUT = 60.0  # Workers do more now, give them time
+WORKER_TIMEOUT = 90.0  # Setup does more, give it time
 
 
 def call_worker(route, payload):
@@ -112,7 +114,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'Dot Brain',
-        'version': '3.1',
+        'version': '3.2',
         'architecture': 'brain-thinks-workers-work',
         'workers': list(WORKER_URLS.keys())
     })
@@ -272,7 +274,7 @@ def handle_traffic():
             return jsonify(routing), 500
         
         # ===================
-        # STEP 5b: ENRICH WITH PROJECT DATA
+        # STEP 5b: ENRICH WITH PROJECT DATA (if job exists)
         # ===================
         if routing.get('jobNumber'):
             project = airtable.get_project(routing.get('jobNumber'))
@@ -481,22 +483,45 @@ def handle_clarify_reply(data, pending_clarify):
     is_yes = content_upper in affirmatives or content_upper.startswith('YES')
     
     # Check for TRIAGE request
-    is_triage = content_upper in ['TRIAGE', 'TRIAGE.', 'NEW JOB', 'NEW']
+    is_triage = content_upper in ['TRIAGE', 'TRIAGE.', 'NEW JOB', 'NEW', 'SET UP', 'SETUP']
     
     if is_triage:
-        # User wants to triage as new job
+        # User wants to triage as new job - call setup worker
         airtable.log_traffic(
-            internet_message_id, conversation_id, 'triage', 'processed',
-            None, None, sender_email, subject
+            internet_message_id, conversation_id, 'setup', 'processed',
+            None, pending_fields.get('clientCode'), sender_email, subject, content
         )
         airtable.update_traffic_record(pending_clarify['id'], {'Status': 'resolved'})
         
-        # TODO: Call triage worker when built
+        # Build payload for setup worker
+        routing = {
+            'route': 'setup',
+            'type': 'action',
+            'clientCode': pending_fields.get('clientCode'),
+            'clientName': pending_fields.get('clientName') or airtable.get_client_name(pending_fields.get('clientCode')),
+        }
+        
+        payload = build_worker_payload(data, routing)
+        
+        # Call setup worker
+        worker_result = call_worker('setup', payload)
+        
+        # If worker failed, send failure email
+        if not worker_result.get('success'):
+            connect.send_failure(
+                to_email=sender_email,
+                route='setup',
+                error_message=worker_result.get('error', 'Unknown error'),
+                sender_name=sender_name,
+                subject_line=subject,
+                original_email=original_email
+            )
+        
         return {
-            'route': 'triage',
+            'route': 'setup',
             'confidence': 'high',
-            'reason': 'User requested triage - worker not yet built',
-            'worker': {'success': False, 'error': 'Triage worker not yet built'}
+            'reason': 'User requested triage/setup',
+            'worker': worker_result
         }
     
     elif reply_job_number:
@@ -633,20 +658,20 @@ def build_worker_payload(email_data, routing):
         'route': routing.get('route'),
         'type': routing.get('type', 'action'),
         
-        # Job info
+        # Job info (may be None for setup - setup creates the job)
         'jobNumber': routing.get('jobNumber'),
         'jobName': routing.get('jobName'),
         'clientCode': routing.get('clientCode'),
         'clientName': routing.get('clientName'),
         
-        # Project info (for Airtable updates)
+        # Project info (for Airtable updates - None for setup)
         'projectRecordId': routing.get('projectRecordId'),
         'currentStage': routing.get('currentStage'),
         'currentStatus': routing.get('currentStatus'),
         'withClient': routing.get('withClient'),
         'filesUrl': routing.get('filesUrl'),
         
-        # Teams info (for posting updates)
+        # Teams info (for posting updates - None for setup, setup creates channel)
         'teamsChannelId': routing.get('teamsChannelId'),
         'teamId': routing.get('teamId'),
         
@@ -676,6 +701,7 @@ def build_worker_payload(email_data, routing):
         'internetMessageId': email_data.get('internetMessageId', ''),
         'conversationId': email_data.get('conversationId', ''),
         'receivedDateTime': email_data.get('receivedDateTime', ''),
+        'allRecipients': email_data.get('allRecipients', []),
         'source': email_data.get('source', 'email'),
     }
 
