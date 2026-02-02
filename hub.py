@@ -178,6 +178,48 @@ def _format_jobs_for_context(jobs):
     return f"{len(jobs)} active jobs:\n" + "\n".join(lines)
 
 
+def _format_meetings_for_context(meetings):
+    """
+    Format meetings for Claude's context.
+    Compact format matching jobs style.
+    """
+    today = meetings.get('today', [])
+    next_meetings = meetings.get('next', [])
+    
+    if not today and not next_meetings:
+        return "No upcoming meetings."
+    
+    lines = []
+    for m in today:
+        parts = [
+            m.get('startTime', ''), '–', m.get('endTime', ''),
+            m.get('title', ''),
+        ]
+        if m.get('location'):
+            parts.append(m.get('location'))
+        if m.get('whose'):
+            parts.append(f"Organiser:{m.get('whose')}")
+        if m.get('attendees'):
+            parts.append(f"Attendees:{m.get('attendees')}")
+        lines.append(f"TODAY: {' | '.join(p for p in parts if p)}")
+    
+    for m in next_meetings:
+        parts = [
+            m.get('startTime', ''), '–', m.get('endTime', ''),
+            m.get('title', ''),
+        ]
+        if m.get('location'):
+            parts.append(m.get('location'))
+        if m.get('whose'):
+            parts.append(f"Organiser:{m.get('whose')}")
+        if m.get('attendees'):
+            parts.append(f"Attendees:{m.get('attendees')}")
+        lines.append(f"NEXT: {' | '.join(p for p in parts if p)}")
+    
+    total = len(today) + len(next_meetings)
+    return f"{total} meetings:\n" + "\n".join(lines)
+
+
 # ===================
 # MAIN HANDLER
 # ===================
@@ -199,13 +241,19 @@ def handle_hub_request(data):
     sender_name = data.get('senderName', 'there')
     history = data.get('history', [])  # Conversation history from frontend
     
+    # Fetch meetings directly from Airtable
+    from airtable import get_meetings
+    meetings = get_meetings()
+    
     print(f"[hub] === SIMPLE CLAUDE + TOOLS ===")
     print(f"[hub] Question: {content}")
     print(f"[hub] Jobs in context: {len(jobs)}")
+    print(f"[hub] Meetings in context: {len(meetings.get('today', [])) + len(meetings.get('next', []))}")
     print(f"[hub] History messages: {len(history)}")
     
-    # Build context with jobs (summary only - NOT full JSON)
+    # Build context with jobs and meetings (summary only - NOT full JSON)
     jobs_context = _format_jobs_for_context(jobs)
+    meetings_context = _format_meetings_for_context(meetings)
     
     # Current message with fresh job data
     current_message = f"""User: {sender_name}
@@ -213,6 +261,9 @@ Question: {content}
 
 === ACTIVE JOBS ===
 {jobs_context}
+
+=== MEETINGS ===
+{meetings_context}
 """
     
     # Build messages array: history + current message

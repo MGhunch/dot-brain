@@ -18,6 +18,7 @@ PROJECTS_TABLE = 'Projects'
 CLIENTS_TABLE = 'Clients'
 TRAFFIC_TABLE = 'Traffic'
 UPDATES_TABLE = 'Updates'
+MEETINGS_TABLE = 'Meetings'
 
 TIMEOUT = 10.0
 
@@ -743,3 +744,102 @@ def get_client_name(client_code):
     except Exception as e:
         print(f"[airtable] Error looking up client name: {e}")
         return None
+
+
+# ===================
+# MEETINGS TABLE
+# ===================
+
+def _parse_meeting_datetime(dt_str):
+    """Parse meeting datetime from Airtable API (UTC) and convert to NZ time.
+    Returns: (date, time_str) or (None, '')
+    """
+    if not dt_str:
+        return None, ''
+    
+    import re
+    from zoneinfo import ZoneInfo
+    nz_tz = ZoneInfo('Pacific/Auckland')
+    
+    # ISO format from API: "2026-02-02T00:00:00.000Z"
+    iso_match = re.match(r'(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})', dt_str)
+    if iso_match:
+        y, mo, d = int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3))
+        h, mi = int(iso_match.group(4)), int(iso_match.group(5))
+        utc_dt = datetime(y, mo, d, h, mi, tzinfo=ZoneInfo('UTC'))
+        nz_dt = utc_dt.astimezone(nz_tz)
+        period = 'am' if nz_dt.hour < 12 else 'pm'
+        display_h = nz_dt.hour % 12 or 12
+        return nz_dt.date(), f"{display_h}:{nz_dt.minute:02d}{period}"
+    
+    return None, ''
+
+
+def get_meetings():
+    """
+    Get meetings for today and next workday.
+    Returns: {'today': [...], 'next': [...]}
+    """
+    if not AIRTABLE_API_KEY:
+        return {'today': [], 'next': []}
+    
+    try:
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        
+        today = datetime.now(ZoneInfo('Pacific/Auckland')).date()
+        weekday = today.weekday()
+        
+        # Next workday: Mon-Thu → tomorrow, Fri-Sun → Monday
+        if weekday == 4:
+            next_day = today + timedelta(days=3)
+        elif weekday == 5:
+            next_day = today + timedelta(days=2)
+        elif weekday == 6:
+            next_day = today + timedelta(days=1)
+        else:
+            next_day = today + timedelta(days=1)
+        
+        response = httpx.get(
+            _url(MEETINGS_TABLE),
+            headers=_headers(),
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        
+        today_meetings = []
+        next_meetings = []
+        
+        for record in response.json().get('records', []):
+            fields = record.get('fields', {})
+            
+            start_str = fields.get('Start', '')
+            end_str = fields.get('End', '')
+            meeting_date, start_time = _parse_meeting_datetime(start_str)
+            _, end_time = _parse_meeting_datetime(end_str)
+            
+            if not meeting_date:
+                continue
+            
+            meeting = {
+                'title': fields.get('Title', ''),
+                'startTime': start_time,
+                'endTime': end_time,
+                'location': fields.get('Location', ''),
+                'whose': fields.get('Whose meeting', ''),
+                'attendees': fields.get("Who's going", ''),
+            }
+            
+            if meeting_date == today:
+                today_meetings.append(meeting)
+            elif meeting_date == next_day:
+                next_meetings.append(meeting)
+        
+        today_meetings.sort(key=lambda x: x.get('startTime', ''))
+        next_meetings.sort(key=lambda x: x.get('startTime', ''))
+        
+        return {'today': today_meetings, 'next': next_meetings}
+    
+    except Exception as e:
+        print(f"[airtable] Error fetching meetings: {e}")
+        return {'today': [], 'next': []}

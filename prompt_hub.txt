@@ -71,6 +71,15 @@ Use this data to answer questions like:
 - "Tell me about LAB 055" → find by JOB_NUMBER
 - "What's with client?" → look for WITH CLIENT flag
 
+You also have meetings in this format:
+TODAY/NEXT: TIME | Title | Location | Organiser:NAME | Attendees:NAMES
+
+Use this to answer:
+- "What meetings do I have today?" → filter by TODAY
+- "Who's in the Fisher Funds meeting?" → check Attendees
+- "Where's my next meeting?" → check Location
+- "When's the One NZ catch up?" → check time
+
 
 === WHAT YOU DON'T KNOW ===
 
