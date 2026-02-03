@@ -240,10 +240,14 @@ def handle_hub_request(data):
     jobs = data.get('jobs', [])
     sender_name = data.get('senderName', 'there')
     history = data.get('history', [])  # Conversation history from frontend
+    access_level = data.get('accessLevel', 'Client WIP')  # Default to most restricted
     
-    # Fetch meetings directly from Airtable
-    from airtable import get_meetings
-    meetings = get_meetings()
+    # Fetch meetings only for Full access users
+    if access_level == 'Full':
+        from airtable import get_meetings
+        meetings = get_meetings()
+    else:
+        meetings = {'today': [], 'next': []}
     
     print(f"[hub] === SIMPLE CLAUDE + TOOLS ===")
     print(f"[hub] Question: {content}")
