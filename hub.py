@@ -357,6 +357,14 @@ Question: {content}
     except json.JSONDecodeError as e:
         print(f"[hub] JSON error: {e}")
         print(f"[hub] Raw response: {result_text[:200] if result_text else 'empty'}")
+        # If Claude returned plain text, treat it as an answer
+        if result_text and result_text.strip():
+            return {
+                'type': 'answer',
+                'message': result_text.strip(),
+                'jobs': None,
+                'nextPrompt': None
+            }
         return {
             'type': 'answer',
             'message': "Sorry, I got in a muddle over that one.",
