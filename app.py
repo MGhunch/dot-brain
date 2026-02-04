@@ -38,6 +38,7 @@ WORKER_URLS = {
     'setup': 'https://dot-workers.up.railway.app/setup',
     'triage': 'https://dot-workers.up.railway.app/setup',  # triage routes to setup
     'new-job': 'https://dot-workers.up.railway.app/setup',  # new-job routes to setup
+    'file': 'https://dot-workers.up.railway.app/file',
     # Future workers:
     # 'feedback': 'https://dot-workers.up.railway.app/feedback',
 }
