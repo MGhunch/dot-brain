@@ -243,6 +243,7 @@ def handle_hub_request(data):
     
     # Current message with fresh job data
     current_message = f"""User: {sender_name}
+Access Level: {access_level}
 Question: {content}
 
 === ACTIVE JOBS ===
