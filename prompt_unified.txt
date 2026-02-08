@@ -145,7 +145,7 @@ UPDATE - Log progress or change status
   Needs: Client + Job
   Route: update
 
-FILE - Store/archive to SharePoint
+FILE - Store/archive to Dropbox
   Trigger: "file this", "archive", "job bag", "save this"
   Needs: Client + Job
   Route: file
