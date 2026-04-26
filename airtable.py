@@ -19,6 +19,7 @@ CLIENTS_TABLE = 'Clients'
 TRAFFIC_TABLE = 'Traffic'
 UPDATES_TABLE = 'Updates'
 MEETINGS_TABLE = 'Meetings'
+TODO_TABLE = 'Todo'
 
 TIMEOUT = 10.0
 
@@ -832,3 +833,100 @@ def get_meetings():
     except Exception as e:
         print(f"[airtable] Error fetching meetings: {e}")
         return []
+
+# ===================
+# TODO TABLE
+# ===================
+
+def _resolve_client_record_id(client_code_or_name):
+    """
+    Look up a Clients record by code OR name.
+    Mirrors the pattern used in dot-hub's app.py.
+    Returns Airtable record ID or None.
+    """
+    if not AIRTABLE_API_KEY or not client_code_or_name:
+        return None
+    try:
+        formula = f"OR({{Client code}} = '{client_code_or_name}', {{Clients}} = '{client_code_or_name}')"
+        response = httpx.get(
+            _url(CLIENTS_TABLE),
+            headers=_headers(),
+            params={'filterByFormula': formula, 'maxRecords': 1},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        records = response.json().get('records', [])
+        return records[0]['id'] if records else None
+    except Exception as e:
+        print(f"[airtable] Error resolving client '{client_code_or_name}': {e}")
+        return None
+
+
+def create_todo(title, bucket='OTHER', client_code=None, urgent=False):
+    """
+    Create a new record in the Todo table.
+
+    Args:
+        title: The todo title (required)
+        bucket: 'CLIENTS' or 'OTHER' (default OTHER)
+        client_code: Optional client code (e.g., 'TOW', 'SKY') - will be resolved to linked record
+        urgent: Bool flag (default False)
+
+    Returns:
+        dict with 'success': True/False, 'record_id', 'todo' (the created record), or 'error'
+    """
+    if not AIRTABLE_API_KEY:
+        return {'success': False, 'error': 'Airtable not configured'}
+    if not title:
+        return {'success': False, 'error': 'Title required'}
+
+    bucket = (bucket or 'OTHER').upper()
+    if bucket not in ('CLIENTS', 'OTHER'):
+        bucket = 'OTHER'
+
+    fields = {
+        'Title': title,
+        'Bucket': bucket,
+        'Urgent': bool(urgent),
+        'Done': False,
+    }
+
+    # Link client if provided AND we can resolve it
+    if client_code:
+        client_record_id = _resolve_client_record_id(client_code)
+        if client_record_id:
+            fields['Client'] = [client_record_id]
+        else:
+            print(f"[airtable] Client '{client_code}' not found - creating todo without link")
+
+    try:
+        response = httpx.post(
+            _url(TODO_TABLE),
+            headers=_headers(),
+            json={'fields': fields},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        new_record = response.json()
+        record_id = new_record.get('id')
+        print(f"[airtable] Created todo: '{title}' [{bucket}] id={record_id}")
+
+        # Return a clean shape (don't expose raw Airtable internals to callers)
+        record_fields = new_record.get('fields', {})
+        client_link = record_fields.get('Client', [])
+        client_name_lookup = record_fields.get('Clients (from Client)', [])
+        todo = {
+            'id': record_id,
+            'title': record_fields.get('Title', title),
+            'bucket': record_fields.get('Bucket', bucket),
+            'clientId': client_link[0] if client_link else None,
+            'clientName': client_name_lookup[0] if client_name_lookup else None,
+            'urgent': bool(record_fields.get('Urgent', urgent)),
+            'done': bool(record_fields.get('Done', False)),
+            'created': record_fields.get('Created', ''),
+        }
+        return {'success': True, 'record_id': record_id, 'todo': todo}
+
+    except Exception as e:
+        print(f"[airtable] Error creating todo: {e}")
+        return {'success': False, 'error': str(e)}
