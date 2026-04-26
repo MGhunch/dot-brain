@@ -24,7 +24,7 @@ from anthropic import Anthropic
 # ===================
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
-ANTHROPIC_MODEL = 'claude-sonnet-4-6-20260218'
+ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 
 # Horoscope service URL (internal call within Brain)
 HOROSCOPE_SERVICE_URL = os.environ.get('HOROSCOPE_SERVICE_URL', 'https://dot-workers.up.railway.app')
