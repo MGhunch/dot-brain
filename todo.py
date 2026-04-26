@@ -28,7 +28,7 @@ import traffic  # for tool functions and CLAUDE_TOOLS subset
 # ===================
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
-ANTHROPIC_MODEL = 'claude-sonnet-4-6-20260218'
+ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 
 # Load prompt
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompt_todo.txt')
