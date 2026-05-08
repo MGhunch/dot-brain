@@ -97,6 +97,27 @@ SPEND_CHART_TOOL = {
 }
 
 
+
+
+HUNCH_SPEND_CHART_TOOL = {
+    "name": "get_hunch_spend_chart",
+    "description": (
+        "Generate a rolling 12-month spend chart for the WHOLE AGENCY "
+        "(Hunch). Aggregates spend across all active clients with their "
+        "total monthly committed line stepped over time. Use this when the "
+        "user asks 'show me Hunch YTD', 'how is Hunch tracking', 'whole of "
+        "business YTD', 'all clients combined', or anything where the unit "
+        "is the agency rather than one client. No client_code needed — this "
+        "tool sums everything itself."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
+
+
 # Worker URL — same Railway service as the others
 SPEND_CHART_SERVICE_URL = os.environ.get(
     'SPEND_CHART_SERVICE_URL',
@@ -123,6 +144,29 @@ def call_spend_chart_service(client_code: str) -> dict:
         return {"error": err}
     except Exception as e:
         print(f"[hub] Spend chart service error: {e}")
+        return {"error": str(e)}
+
+
+
+
+
+def call_hunch_spend_chart_service() -> dict:
+    """Call the Hunch (whole-of-business) spend chart worker."""
+    try:
+        response = httpx.post(
+            f"{SPEND_CHART_SERVICE_URL}/charts/spend/hunch",
+            json={},
+            timeout=45.0,  # slightly longer — fetches all clients
+        )
+        if response.status_code == 200:
+            return response.json()
+        try:
+            err = response.json().get("error", f"status {response.status_code}")
+        except Exception:
+            err = f"status {response.status_code}"
+        return {"error": err}
+    except Exception as e:
+        print(f"[hub] Hunch spend chart service error: {e}")
         return {"error": str(e)}
 
 
@@ -172,6 +216,29 @@ def handle_tool_call(tool_name: str, tool_input: dict):
             return json.dumps({"error": err}), None
 
         # Hand Claude the summary only. The image rides as an attachment.
+        attachment = {
+            "type": "chart",
+            "imageBase64": result["image_base64"],
+            "clientCode": result.get("client_code"),
+            "clientName": result.get("client_name"),
+            "fyLabel": result.get("fy_label"),
+        }
+        tool_result = json.dumps({
+            "summary": result.get("summary", ""),
+            "client_code": result.get("client_code"),
+            "client_name": result.get("client_name"),
+            "fy_label": result.get("fy_label"),
+            "variance": result.get("variance"),
+            "chart_rendered": True,
+        })
+        return tool_result, attachment
+
+    if tool_name == "get_hunch_spend_chart":
+        result = call_hunch_spend_chart_service()
+        if "error" in result or not result.get("success"):
+            err = result.get("error", "Hunch spend chart service failed.")
+            return json.dumps({"error": err}), None
+
         attachment = {
             "type": "chart",
             "imageBase64": result["image_base64"],
@@ -367,7 +434,7 @@ Question: {content}
             temperature=0.1,
             system=HUB_PROMPT,
             messages=messages,
-            tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL]
+            tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL]
         )
         
         # Check if Claude wants to use a tool
@@ -410,7 +477,7 @@ Question: {content}
                     temperature=0.1,
                     system=HUB_PROMPT,
                     messages=messages,
-                    tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL]
+                    tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL]
                 )
         
         # Extract text response
