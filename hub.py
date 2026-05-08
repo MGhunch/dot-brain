@@ -66,6 +66,66 @@ HOROSCOPE_TOOL = {
 }
 
 
+
+
+SPEND_CHART_TOOL = {
+    "name": "get_spend_chart",
+    "description": (
+        "Generate a YTD monthly-spend bar chart for one Hunch client, with "
+        "their monthly committed spend shown as a dotted line. Use this when "
+        "the user asks how a client is tracking on spend, asks for a YTD "
+        "chart, asks 'show me [client] spend', asks if they're under or over "
+        "on a client, or anything else where they want to visualise monthly "
+        "billing against commitment. Returns a chart and a one-line summary."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "client_code": {
+                "type": "string",
+                "description": (
+                    "Three-letter client code: TOW (Tower), SKY (Sky), "
+                    "ONE (One NZ – Marketing), ONS (One NZ – Simplification), "
+                    "ONB (One NZ – Business), FIS (Fisher Funds). "
+                    "If the user names a client without specifying which "
+                    "One NZ, ask them which one."
+                ),
+            }
+        },
+        "required": ["client_code"],
+    },
+}
+
+
+# Worker URL — same Railway service as the others
+SPEND_CHART_SERVICE_URL = os.environ.get(
+    'SPEND_CHART_SERVICE_URL',
+    'https://dot-workers.up.railway.app'
+)
+
+
+def call_spend_chart_service(client_code: str) -> dict:
+    """Call the spend chart worker. Returns the worker's JSON response,
+    or {"error": "..."} if anything went wrong.
+    """
+    try:
+        response = httpx.post(
+            f"{SPEND_CHART_SERVICE_URL}/charts/spend",
+            json={"client_code": client_code},
+            timeout=30.0,
+        )
+        if response.status_code == 200:
+            return response.json()
+        try:
+            err = response.json().get("error", f"status {response.status_code}")
+        except Exception:
+            err = f"status {response.status_code}"
+        return {"error": err}
+    except Exception as e:
+        print(f"[hub] Spend chart service error: {e}")
+        return {"error": str(e)}
+
+
 def call_horoscope_service(sign: str) -> dict:
     """
     Call the horoscope service to get a reading.
@@ -84,20 +144,52 @@ def call_horoscope_service(sign: str) -> dict:
         return {"error": str(e)}
 
 
-def handle_tool_call(tool_name: str, tool_input: dict) -> str:
+def handle_tool_call(tool_name: str, tool_input: dict):
     """
     Handle a tool call from Claude.
+
+    Returns:
+        (tool_result: str, attachment: dict | None)
+
+    The tool_result is a JSON string fed back to Claude on the second
+    API call. The attachment, if any, is attached to the final response
+    we return to the Hub — Claude never sees it.
     """
     if tool_name == "get_horoscope":
         sign = tool_input.get("sign", "").lower()
         result = call_horoscope_service(sign)
         if "error" in result:
-            return json.dumps({"error": result["error"]})
+            return json.dumps({"error": result["error"]}), None
         return json.dumps({
             "message": result.get("message", "The stars are silent today.")
+        }), None
+
+    if tool_name == "get_spend_chart":
+        client_code = tool_input.get("client_code", "").strip().upper()
+        result = call_spend_chart_service(client_code)
+        if "error" in result or not result.get("success"):
+            err = result.get("error", "Spend chart service failed.")
+            return json.dumps({"error": err}), None
+
+        # Hand Claude the summary only. The image rides as an attachment.
+        attachment = {
+            "type": "chart",
+            "imageBase64": result["image_base64"],
+            "clientCode": result.get("client_code"),
+            "clientName": result.get("client_name"),
+            "fyLabel": result.get("fy_label"),
+        }
+        tool_result = json.dumps({
+            "summary": result.get("summary", ""),
+            "client_code": result.get("client_code"),
+            "client_name": result.get("client_name"),
+            "fy_label": result.get("fy_label"),
+            "variance": result.get("variance"),
+            "chart_rendered": True,
         })
-    
-    return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        return tool_result, attachment
+
+    return json.dumps({"error": f"Unknown tool: {tool_name}"}), None
 
 
 # ===================
@@ -267,6 +359,7 @@ Question: {content}
     messages.append({'role': 'user', 'content': current_message})
     
     try:
+        pending_attachment = None  # holds spend-chart PNG if a chart tool fires
         # First API call - may return tool use or direct response
         response = anthropic_client.messages.create(
             model=ANTHROPIC_MODEL,
@@ -274,7 +367,7 @@ Question: {content}
             temperature=0.1,
             system=HUB_PROMPT,
             messages=messages,
-            tools=[HOROSCOPE_TOOL]
+            tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL]
         )
         
         # Check if Claude wants to use a tool
@@ -290,9 +383,9 @@ Question: {content}
                 print(f"[hub] Tool call: {tool_use_block.name}")
                 print(f"[hub] Tool input: {tool_use_block.input}")
                 
-                # Execute the tool
-                tool_result = handle_tool_call(
-                    tool_use_block.name, 
+                # Execute the tool — may return an attachment for the Hub
+                tool_result, pending_attachment = handle_tool_call(
+                    tool_use_block.name,
                     tool_use_block.input
                 )
                 
@@ -317,7 +410,7 @@ Question: {content}
                     temperature=0.1,
                     system=HUB_PROMPT,
                     messages=messages,
-                    tools=[HOROSCOPE_TOOL]
+                    tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL]
                 )
         
         # Extract text response
@@ -334,7 +427,13 @@ Question: {content}
         print(f"[hub] Message: {result.get('message', '')[:50]}...")
         if result.get('jobs'):
             print(f"[hub] Jobs returned: {result.get('jobs')}")
-        
+
+        # Attach the spend chart PNG if the tool was used
+        if pending_attachment:
+            result['attachment'] = pending_attachment
+            if pending_attachment.get('type') == 'chart':
+                result['type'] = 'chart'
+
         return result
         
     except json.JSONDecodeError as e:
