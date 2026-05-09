@@ -175,46 +175,6 @@ def handle_hub():
 
 
 # ===================
-# TODO ENDPOINT (Classifier - Skill / Email forward)
-# ===================
-
-@app.route('/todo', methods=['POST'])
-def handle_todo():
-    """
-    Classify a todo dump and write to Airtable.
-    Called by the Claude skill (raw text) or Power Automate email forward.
-
-    Expected payload: {text, sender_email}
-    Returns: {success, message, todo, classification}
-    """
-    try:
-        import todo
-        data = request.get_json() or {}
-
-        text = (data.get('text') or '').strip()
-        if not text:
-            return jsonify({
-                'success': False,
-                'message': 'No text provided.',
-                'todo': None
-            }), 400
-
-        result = todo.handle_todo_request(data)
-        status = 200 if result.get('success') else 500
-        return jsonify(result), status
-
-    except Exception as e:
-        print(f"[app] Todo error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'message': "Sorry, something went wrong adding that todo.",
-            'todo': None
-        }), 500
-
-
-# ===================
 # MAIN TRAFFIC ENDPOINT (Full Claude - Email)
 # ===================
 
