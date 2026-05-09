@@ -654,6 +654,7 @@ Question: {content}
     
     try:
         pending_attachment = None  # holds spend-chart PNG if a chart tool fires
+        mutated_types = []         # types of data the tools mutated ('todo', 'jobs', etc.)
         # First API call - may return tool use or direct response
         response = anthropic_client.messages.create(
             model=ANTHROPIC_MODEL,
@@ -676,7 +677,13 @@ Question: {content}
             if tool_use_block:
                 print(f"[hub] Tool call: {tool_use_block.name}")
                 print(f"[hub] Tool input: {tool_use_block.input}")
-                
+
+                # Note which kind of data this tool touches so the frontend
+                # can refresh the right view after the response.
+                if tool_use_block.name in ('capture_todo', 'update_todo'):
+                    if 'todo' not in mutated_types:
+                        mutated_types.append('todo')
+
                 # Execute the tool — may return an attachment for the Hub
                 tool_result, pending_attachment = handle_tool_call(
                     tool_use_block.name,
@@ -727,6 +734,10 @@ Question: {content}
             result['attachment'] = pending_attachment
             if pending_attachment.get('type') == 'chart':
                 result['type'] = 'chart'
+
+        # Tell the frontend what to refresh (e.g. ['todo'] after a capture)
+        if mutated_types:
+            result['mutated'] = mutated_types
 
         return result
         
