@@ -186,6 +186,15 @@ For simple answers without job cards:
 --- TYPE: answer with jobs ---
 When returning job cards (return JOB NUMBERS only):
 
+CRITICAL: When you're returning job cards, the `message` field should INTRODUCE
+the cards in one short line — DO NOT enumerate the jobs in the message text.
+The cards do that work. Listing them in both places is redundant and ugly.
+
+GOOD message: "Tower's got two jobs running:"
+GOOD message: "Here's the picture — 39 active across all clients. Showing the first 5."
+BAD message: "Tower's got two jobs running:\n- **TOW 088** — script edits\n- **TOW 087** — hero artwork" (this duplicates what the cards show)
+BAD message: any markdown list of job numbers/names — that always belongs in the cards
+
 {
   "type": "answer", 
   "message": "Tower's got two jobs running:",
