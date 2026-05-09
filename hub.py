@@ -29,6 +29,12 @@ ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 # Horoscope service URL (internal call within Brain)
 HOROSCOPE_SERVICE_URL = os.environ.get('HOROSCOPE_SERVICE_URL', 'https://dot-workers.up.railway.app')
 
+# Todo worker URL (capture endpoint)
+TODO_WORKER_URL = os.environ.get('TODO_WORKER_URL', 'https://dot-workers.up.railway.app')
+
+# Hub URL (for update_todo — calls Hub's /api/todos endpoints)
+HUB_API_URL = os.environ.get('HUB_API_URL', 'https://dot.hunch.co.nz')
+
 # Load prompt
 PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompt_hub.txt')
 with open(PROMPT_PATH, 'r') as f:
@@ -118,6 +124,84 @@ HUNCH_SPEND_CHART_TOOL = {
 }
 
 
+
+
+CAPTURE_TODO_TOOL = {
+    "name": "capture_todo",
+    "description": (
+        "Capture a to-do dump from the user. Use whenever the user is dumping "
+        "a task they want remembered — phrases like 'remind me to...', 'add "
+        "to my todo', 'todo:', 'don't forget...', 'don't let me forget...', "
+        "or a bare command-form task ('Email Keith re strat pack', 'Book All "
+        "Blacks tickets'). Pass the user's full dump straight through — the "
+        "worker classifier rewrites the title, picks bucket/client/urgent/"
+        "confidence, and may split multiple tasks. Returns the saved record(s)."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "dump": {
+                "type": "string",
+                "description": (
+                    "The user's raw todo dump, exactly as they said it. "
+                    "Don't rewrite or trim — the classifier handles that."
+                ),
+            }
+        },
+        "required": ["dump"],
+    },
+}
+
+
+
+
+UPDATE_TODO_TOOL = {
+    "name": "update_todo",
+    "description": (
+        "Correct a recently-captured todo. Use when the user replies to a "
+        "capture confirmation with a correction like 'not Tower, Labour', "
+        "'that's personal not client work', 'make it urgent', or 'should be "
+        "\"strategy\" not \"strat\"'. Looks up the most recent matching todo "
+        "by title (case-insensitive) and patches the requested fields. Pass "
+        "title from the previous turn's confirmation; pass only the new_* "
+        "fields the user is correcting."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": (
+                    "The current title of the todo to correct. Read it from "
+                    "your previous confirmation message — it's quoted there."
+                ),
+            },
+            "new_title": {
+                "type": "string",
+                "description": "Optional. Replacement title.",
+            },
+            "new_client_code": {
+                "type": "string",
+                "description": (
+                    "Optional. New 3-letter client code (ONE/ONS/ONB/SKY/TOW/"
+                    "FIS/LAB/HUN). Pass empty string to clear the client link."
+                ),
+            },
+            "new_bucket": {
+                "type": "string",
+                "description": "Optional. CLIENTS or OTHER.",
+                "enum": ["CLIENTS", "OTHER"],
+            },
+            "new_urgent": {
+                "type": "boolean",
+                "description": "Optional. true to mark urgent, false to unmark.",
+            },
+        },
+        "required": ["title"],
+    },
+}
+
+
 # Worker URL — same Railway service as the others
 SPEND_CHART_SERVICE_URL = os.environ.get(
     'SPEND_CHART_SERVICE_URL',
@@ -188,6 +272,127 @@ def call_horoscope_service(sign: str) -> dict:
         return {"error": str(e)}
 
 
+def call_capture_todo_service(dump: str) -> dict:
+    """
+    POST a raw dump to the worker /todo endpoint.
+    The worker classifies (with its own tool-loop) and writes records.
+    Returns the worker's JSON: {success, saved: [...], count, failed?}.
+    """
+    try:
+        response = httpx.post(
+            f"{TODO_WORKER_URL}/todo",
+            json={"dump": dump},
+            timeout=30.0,  # the classifier may run a tool-loop
+        )
+        if response.status_code == 200:
+            return response.json()
+        try:
+            err = response.json().get("error", f"status {response.status_code}")
+        except Exception:
+            err = f"status {response.status_code}"
+        return {"success": False, "error": err}
+    except Exception as e:
+        print(f"[hub] Todo capture service error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# Cached client record IDs for the Client linked field on Todo records.
+# Same source as services/todo in dot-workers — kept here because the
+# update path goes via Hub's /api/todos and Hub takes a code OR name and
+# resolves itself. We only need codes here for validation.
+TODO_CLIENT_CODES = ('ONE', 'ONS', 'ONB', 'SKY', 'TOW', 'FIS', 'LAB', 'HUN')
+
+
+def call_update_todo_service(title: str,
+                             new_title: str = None,
+                             new_client_code: str = None,
+                             new_bucket: str = None,
+                             new_urgent: bool = None) -> dict:
+    """
+    Look up the most recent todo whose title matches `title` (case-insensitive,
+    exact match), then PATCH it via Hub's /api/todos/<id> with whichever
+    new_* fields were provided.
+
+    Returns: {success, updated: {...} | None, error?}
+    """
+    # 1. Find the todo
+    try:
+        list_response = httpx.get(
+            f"{HUB_API_URL}/api/todos",
+            timeout=10.0,
+        )
+        if list_response.status_code != 200:
+            return {"success": False, "error": f"List failed: {list_response.status_code}"}
+        all_todos = list_response.json()
+    except Exception as e:
+        print(f"[hub] update_todo list error: {e}")
+        return {"success": False, "error": f"List failed: {e}"}
+
+    needle = (title or '').strip().lower()
+    if not needle:
+        return {"success": False, "error": "No title provided"}
+
+    # API already returns newest first — first exact match wins.
+    match = None
+    for todo in all_todos:
+        if (todo.get('title') or '').strip().lower() == needle:
+            match = todo
+            break
+
+    if not match:
+        return {
+            "success": False,
+            "error": f"No todo found with title '{title}'."
+        }
+
+    # 2. Build PATCH payload — only the fields the caller specified
+    patch = {}
+    if new_title is not None and new_title.strip():
+        patch['title'] = new_title.strip()
+    if new_client_code is not None:
+        # Empty string = clear the link; otherwise validate the code
+        if new_client_code == '':
+            patch['client'] = ''
+        else:
+            code = new_client_code.strip().upper()
+            if code not in TODO_CLIENT_CODES:
+                return {"success": False, "error": f"Unknown client code '{new_client_code}'"}
+            patch['client'] = code
+    if new_bucket is not None:
+        bucket = new_bucket.strip().upper()
+        if bucket not in ('CLIENTS', 'OTHER'):
+            return {"success": False, "error": f"Bucket must be CLIENTS or OTHER, got '{new_bucket}'"}
+        patch['bucket'] = bucket
+    if new_urgent is not None:
+        patch['urgent'] = bool(new_urgent)
+
+    if not patch:
+        return {"success": False, "error": "No fields to update"}
+
+    # 3. PATCH it
+    try:
+        record_id = match.get('id')
+        patch_response = httpx.patch(
+            f"{HUB_API_URL}/api/todos/{record_id}",
+            json=patch,
+            timeout=10.0,
+        )
+        if patch_response.status_code != 200:
+            try:
+                err = patch_response.json().get('error', f"status {patch_response.status_code}")
+            except Exception:
+                err = f"status {patch_response.status_code}"
+            return {"success": False, "error": err}
+        return {
+            "success": True,
+            "updated": patch_response.json(),
+            "changed_fields": list(patch.keys()),
+        }
+    except Exception as e:
+        print(f"[hub] update_todo patch error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def handle_tool_call(tool_name: str, tool_input: dict):
     """
     Handle a tool call from Claude.
@@ -255,6 +460,28 @@ def handle_tool_call(tool_name: str, tool_input: dict):
             "chart_rendered": True,
         })
         return tool_result, attachment
+
+    if tool_name == "capture_todo":
+        dump = (tool_input.get("dump") or "").strip()
+        if not dump:
+            return json.dumps({"success": False, "error": "Empty dump"}), None
+        result = call_capture_todo_service(dump)
+        # Pass the worker's response straight back to Claude — the prompt
+        # tells Claude how to summarise the saved record(s) for the user.
+        return json.dumps(result), None
+
+    if tool_name == "update_todo":
+        title = (tool_input.get("title") or "").strip()
+        if not title:
+            return json.dumps({"success": False, "error": "No title provided"}), None
+        result = call_update_todo_service(
+            title=title,
+            new_title=tool_input.get("new_title"),
+            new_client_code=tool_input.get("new_client_code"),
+            new_bucket=tool_input.get("new_bucket"),
+            new_urgent=tool_input.get("new_urgent"),
+        )
+        return json.dumps(result), None
 
     return json.dumps({"error": f"Unknown tool: {tool_name}"}), None
 
@@ -434,7 +661,7 @@ Question: {content}
             temperature=0.1,
             system=HUB_PROMPT,
             messages=messages,
-            tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL]
+            tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL, CAPTURE_TODO_TOOL, UPDATE_TODO_TOOL]
         )
         
         # Check if Claude wants to use a tool
@@ -477,7 +704,7 @@ Question: {content}
                     temperature=0.1,
                     system=HUB_PROMPT,
                     messages=messages,
-                    tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL]
+                    tools=[HOROSCOPE_TOOL, SPEND_CHART_TOOL, HUNCH_SPEND_CHART_TOOL, CAPTURE_TODO_TOOL, UPDATE_TODO_TOOL]
                 )
         
         # Extract text response

@@ -39,6 +39,7 @@ WORKER_URLS = {
     'triage': 'https://dot-workers.up.railway.app/setup',  # triage routes to setup
     'new-job': 'https://dot-workers.up.railway.app/setup',  # new-job routes to setup
     'file': 'https://dot-workers.up.railway.app/file',
+    'todo': 'https://dot-workers.up.railway.app/todo',
     # Future workers:
     # 'feedback': 'https://dot-workers.up.railway.app/feedback',
 }
@@ -679,6 +680,14 @@ def build_worker_payload(email_data, routing):
         # Email content (for worker to analyze)
         'emailContent': email_data.get('body') or email_data.get('content') or email_data.get('emailContent', ''),
         'subjectLine': email_data.get('subject') or email_data.get('subjectLine', ''),
+
+        # Todo dump (only the /todo worker reads this — others ignore it).
+        # Combines subject + body so a "todo: <thing>" subject works whether
+        # the body is empty or contains an extension.
+        'dump': (
+            (email_data.get('subject') or email_data.get('subjectLine', '') or '') + '\n\n' +
+            (email_data.get('body') or email_data.get('content') or email_data.get('emailContent', '') or '')
+        ).strip(),
         
         # Sender info (for confirmation emails)
         'senderName': email_data.get('senderName', ''),

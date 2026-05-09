@@ -115,8 +115,8 @@ EMAIL DOMAIN MAPPING:
 
 === ACTIONS (Route to Workers) ===
 
-TODO - Personal task list
-  Trigger: "to do", "what's on today", "my tasks"
+TODO - Capture a task into the to-do list
+  Trigger: "remind me to...", "add to my todo", "todo:", "to do:", "don't forget...", "don't let me forget..."
   Needs: Nothing
   Route: todo
 
